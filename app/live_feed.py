@@ -237,14 +237,16 @@ class LiveMarketFeed:
             async with self.session.get(url, params=params) as resp:
                 if resp.status == 200:
                     book = await resp.json()
-                    bids = book.get("bids", [])
-                    asks = book.get("asks", [])
+                    # Polymarket CLOB order books require:
+                    # - Best Bid: HIGHEST bid price (max)
+                    # - Best Ask: LOWEST ask price (min)
+                    best_bid_entry = max(bids, key=lambda b: float(b["price"])) if bids else None
+                    best_bid = float(best_bid_entry["price"]) if best_bid_entry else default_bid
+                    best_bid_size = float(best_bid_entry.get("size", 100.0)) if best_bid_entry else 100.0
 
-                    best_bid = float(bids[0]["price"]) if bids else default_bid
-                    best_bid_size = float(bids[0]["size"]) if bids else 100.0
-
-                    best_ask = float(asks[0]["price"]) if asks else default_ask
-                    best_ask_size = float(asks[0]["size"]) if asks else 100.0
+                    best_ask_entry = min(asks, key=lambda a: float(a["price"])) if asks else None
+                    best_ask = float(best_ask_entry["price"]) if best_ask_entry else default_ask
+                    best_ask_size = float(best_ask_entry.get("size", 100.0)) if best_ask_entry else 100.0
 
                     mid_price = round((best_bid + best_ask) / 2.0, 4)
 

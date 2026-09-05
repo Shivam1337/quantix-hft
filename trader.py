@@ -142,8 +142,10 @@ class LiveHFTTrader:
             tick_sz = 0.001
         elif self.mid_price > 1:
             tick_sz = 0.0001
-        elif self.mid_price > 0:
+        elif self.mid_price > 0.01:
             tick_sz = 0.00001
+        elif self.mid_price > 0:
+            tick_sz = 0.000001
 
         self.model = AvellanedaStoikovModel(
             gamma=self.gamma,
@@ -332,6 +334,8 @@ class LiveHFTTrader:
             self.pair_start_time = time.time()
             self.pair_start_equity = self.cash
             self.pair_fills_count = 0
+            self.mid_price = 0.0
+            self.model = None
             self.vol_estimator = RollingVolatility(window_size=50)
             self.current_book = None
             self.price_history.clear()
@@ -465,9 +469,23 @@ class LiveHFTTrader:
         self.current_ofi = round(ofi, 2)
         self.current_book = new_book
 
-        # Update model tick size if not set
+        # Dynamically infer exact tick size from order book levels
+        tick_sz = 0.0001
+        diffs = []
+        if len(bids) >= 2:
+            diffs.extend([abs(bids[i].price - bids[i+1].price) for i in range(min(5, len(bids)-1))])
+        if len(asks) >= 2:
+            diffs.extend([abs(asks[i+1].price - asks[i].price) for i in range(min(5, len(asks)-1))])
+        valid_diffs = [round(d, 8) for d in diffs if d > 1e-9]
+        if valid_diffs:
+            tick_sz = min(valid_diffs)
+        elif mid > 0:
+            decimals = max(0, int(math.ceil(-math.log10(mid * 0.0005))))
+            tick_sz = 10 ** (-decimals)
+
         if not self.model:
             self.configure({})
+        self.model.tick_size = tick_sz
 
         inv_usd = self.inventory * mid
         abs_inv_usd = abs(inv_usd)
@@ -596,8 +614,8 @@ class LiveHFTTrader:
             oldest_px = self.price_history[0][1]
             momentum_bps = (mid - oldest_px) / oldest_px * 10000.0
 
-        dumping = (momentum_bps < -10.0) or (ofi < -1200.0)
-        pumping = (momentum_bps > +10.0) or (ofi > +1200.0)
+        dumping = (momentum_bps < -15.0) or (ofi < -85.0)
+        pumping = (momentum_bps > +15.0) or (ofi > +85.0)
 
         # Dynamic Emergency Taker Stop-Loss:
         # Scale with order size (check on positions >= $7.00)

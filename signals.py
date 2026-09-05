@@ -69,46 +69,57 @@ class OrderBook:
         return (self.best_bid * self.best_ask_size + self.best_ask * self.best_bid_size) / total_sz
 
 
-def calculate_ofi(prev_book: OrderBook, curr_book: OrderBook, levels: int = 1) -> float:
+def calculate_ofi(prev_book: OrderBook, curr_book: OrderBook, levels: int = 3) -> float:
     """
-    Computes Cont-Kukanov-Stoikov Order Flow Imbalance (OFI).
-    Positive OFI indicates net incoming buying pressure (order book building on bid / eaten on ask).
+    Computes Cont-Kukanov-Stoikov Order Flow Imbalance (OFI) normalized to [-100.0, +100.0].
+    Evaluates order book shifts in USD notional (price * size) so that it is scale-invariant
+    across high-price assets (BTC) and micro-price meme tokens (BOME).
+    Positive OFI indicates net incoming buying pressure (depth building on bid / depleted on ask).
     Negative OFI indicates net selling pressure.
     """
     if not prev_book.bids or not prev_book.asks or not curr_book.bids or not curr_book.asks:
         return 0.0
 
-    ofi = 0.0
     depth = min(levels, len(prev_book.bids), len(curr_book.bids), len(prev_book.asks), len(curr_book.asks))
+    if depth == 0:
+        return 0.0
+
+    delta_b_usd = 0.0
+    delta_a_usd = 0.0
+    total_depth_usd = 0.0
 
     for i in range(depth):
         p_b_prev = prev_book.bids[i].price
-        q_b_prev = prev_book.bids[i].size
+        q_b_prev = prev_book.bids[i].size * p_b_prev
         p_b_curr = curr_book.bids[i].price
-        q_b_curr = curr_book.bids[i].size
+        q_b_curr = curr_book.bids[i].size * p_b_curr
 
         if p_b_curr > p_b_prev:
-            delta_b = q_b_curr
+            delta_b_usd += q_b_curr
         elif p_b_curr == p_b_prev:
-            delta_b = q_b_curr - q_b_prev
+            delta_b_usd += (q_b_curr - q_b_prev)
         else:
-            delta_b = -q_b_prev
+            delta_b_usd -= q_b_prev
 
         p_a_prev = prev_book.asks[i].price
-        q_a_prev = prev_book.asks[i].size
+        q_a_prev = prev_book.asks[i].size * p_a_prev
         p_a_curr = curr_book.asks[i].price
-        q_a_curr = curr_book.asks[i].size
+        q_a_curr = curr_book.asks[i].size * p_a_curr
 
         if p_a_curr < p_a_prev:
-            delta_a = q_a_curr
+            delta_a_usd += q_a_curr
         elif p_a_curr == p_a_prev:
-            delta_a = q_a_curr - q_a_prev
+            delta_a_usd += (q_a_curr - q_a_prev)
         else:
-            delta_a = -q_a_prev
+            delta_a_usd -= q_a_prev
 
-        ofi += (delta_b - delta_a)
+        total_depth_usd += (q_b_curr + q_a_curr)
 
-    return ofi
+    if total_depth_usd <= 0:
+        return 0.0
+
+    ofi_ratio = (delta_b_usd - delta_a_usd) / total_depth_usd
+    return float(np.clip(ofi_ratio * 100.0, -100.0, 100.0))
 
 
 class RollingVolatility:
@@ -254,7 +265,8 @@ class AvellanedaStoikovModel:
         if bid >= ask:
             ask = bid + self.tick_size
 
-        return round(bid, 8), round(ask, 8)
+        decimals = max(2, min(8, int(round(-math.log10(self.tick_size))))) if self.tick_size < 1 else 2
+        return round(bid, decimals), round(ask, decimals)
 
     def compute_dynamic_sizes(
         self,

@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Tick datasets
+tick_data_*.jsonl
+*.parquet
+*.feather
+
+# Environment & credentials
+.env
+*.key
+*.pem
+
+# OS generated files
+.DS_Store
+Thumbs.db

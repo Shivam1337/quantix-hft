@@ -1,0 +1,11 @@
+services:
+  quantix-hft:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quantix-hft
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped

@@ -102,7 +102,33 @@ function updateDashboard(data) {
     document.getElementById('kpi-cash').innerText = `$${p.cash.toFixed(2)}`;
     document.getElementById('kpi-locked').innerText = `$${p.locked_capital.toFixed(2)}`;
     document.getElementById('kpi-events-count').innerText = status.events_count || 0;
+    const tokensEl = document.getElementById('kpi-tokens-count');
+    if (tokensEl && status.tokens_count !== undefined) {
+        tokensEl.innerText = status.tokens_count;
+    }
     document.getElementById('kpi-positions-count').innerText = p.open_positions_count;
+
+    // 3. System Resources (CPU & RAM)
+    const sys = data.system;
+    if (sys) {
+        const cpuEl = document.getElementById('cpu-display');
+        if (cpuEl) cpuEl.innerText = `${sys.cpu_percent.toFixed(1)}%`;
+
+        const ramEl = document.getElementById('ram-display');
+        if (ramEl) ramEl.innerText = `${sys.ram_used_mb} MB`;
+
+        const kpiCpu = document.getElementById('kpi-cpu');
+        if (kpiCpu) kpiCpu.innerText = `${sys.cpu_percent.toFixed(1)}%`;
+
+        const kpiRam = document.getElementById('kpi-ram');
+        if (kpiRam) kpiRam.innerText = `${sys.ram_used_mb} MB (${sys.ram_percent}%)`;
+
+        const kpiCpuBar = document.getElementById('kpi-cpu-bar');
+        if (kpiCpuBar) kpiCpuBar.style.width = `${Math.min(100, Math.max(3, sys.cpu_percent))}%`;
+
+        const kpiRamBar = document.getElementById('kpi-ram-bar');
+        if (kpiRamBar) kpiRamBar.style.width = `${Math.min(100, Math.max(3, sys.ram_percent))}%`;
+    }
 
     // Toggle button state
     const btn = document.getElementById('toggle-engine-btn');

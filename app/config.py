@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     GAMMA_API_BASE: str = "https://gamma-api.polymarket.com"
     CLOB_API_BASE: str = "https://clob.polymarket.com"
     CLOB_WS_URL: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-    MONITORED_EVENTS_LIMIT: int = int(os.getenv("MONITORED_EVENTS_LIMIT", "12"))
+    MONITORED_EVENTS_LIMIT: int = int(os.getenv("MONITORED_EVENTS_LIMIT", "25"))
     POLL_INTERVAL_SECONDS: float = float(os.getenv("POLL_INTERVAL_SECONDS", "3.0"))
 
     class Config:

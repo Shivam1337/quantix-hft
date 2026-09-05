@@ -78,6 +78,32 @@ async def serve_dashboard():
     return HTMLResponse("<h2>Dashboard is loading...</h2>")
 
 
+def get_system_metrics() -> dict:
+    """Returns real-time host and process CPU and RAM usage."""
+    try:
+        import psutil
+        cpu_pct = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory()
+        process = psutil.Process()
+        proc_mem = process.memory_info().rss / (1024 * 1024)
+        return {
+            "cpu_percent": round(cpu_pct, 1),
+            "ram_percent": round(mem.percent, 1),
+            "ram_used_mb": round(mem.used / (1024 * 1024), 1),
+            "ram_total_mb": round(mem.total / (1024 * 1024), 1),
+            "process_ram_mb": round(proc_mem, 1)
+        }
+    except Exception as e:
+        return {
+            "cpu_percent": 0.0,
+            "ram_percent": 0.0,
+            "ram_used_mb": 0.0,
+            "ram_total_mb": 0.0,
+            "process_ram_mb": 0.0,
+            "error": str(e)
+        }
+
+
 @app.get("/health")
 async def health_check():
     """Liveness and readiness probe for Docker / Dokploy / Traefik."""
@@ -88,7 +114,8 @@ async def health_check():
             "database": "connected",
             "database_type": "PostgreSQL" if db.is_postgres else "SQLite",
             "engine_running": arb_engine.is_running,
-            "uptime_seconds": round(time.time() - start_time, 1)
+            "uptime_seconds": round(time.time() - start_time, 1),
+            "system": get_system_metrics()
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -105,7 +132,8 @@ async def get_status():
         "monitored_events_count": len(live_feed.monitored_events),
         "tracked_tokens_count": len(live_feed.order_books),
         "last_market_tick_ts": live_feed.last_update_ts,
-        "is_engine_running": arb_engine.is_running
+        "is_engine_running": arb_engine.is_running,
+        "system": get_system_metrics()
     }
 
 
@@ -175,13 +203,15 @@ async def event_stream(request: Request):
             portfolio = simulator.get_portfolio_summary()
             payload = {
                 "portfolio": portfolio,
-                "opportunities": arb_engine.recent_opportunities[:15],
+                "opportunities": arb_engine.recent_opportunities[:25],
                 "open_positions": list(simulator.open_positions.values()),
                 "status": {
                     "events_count": len(live_feed.monitored_events),
+                    "tokens_count": len(live_feed.order_books),
                     "db_type": "PostgreSQL" if db.is_postgres else "SQLite",
                     "uptime": round(time.time() - start_time, 0)
-                }
+                },
+                "system": get_system_metrics()
             }
             yield f"data: {json.dumps(payload)}\n\n"
             await asyncio.sleep(1.5)

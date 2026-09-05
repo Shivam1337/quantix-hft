@@ -47,14 +47,23 @@
         </div>
 
         <!-- Header Status & Controls -->
-        <div class="flex items-center space-x-4 text-xs">
+        <!-- Header Status & Controls -->
+        <div class="flex items-center space-x-3 text-xs">
             <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-darkBorder">
                 <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span id="db-badge" class="text-slate-300 font-medium">DB: Connecting...</span>
             </div>
             <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-darkBorder">
+                <i class="fa-solid fa-microchip text-cyan-400"></i>
+                <span>CPU: <span id="cpu-display" class="font-mono text-cyan-300 font-semibold">0.0%</span></span>
+            </div>
+            <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-darkBorder">
+                <i class="fa-solid fa-memory text-violet-400"></i>
+                <span>RAM: <span id="ram-display" class="font-mono text-violet-300 font-semibold">0 MB</span></span>
+            </div>
+            <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-darkBorder">
                 <i class="fa-solid fa-clock text-slate-400"></i>
-                <span>Uptime: <span id="uptime-display" class="font-mono text-slate-200">0s</span></span>
+                <span><span id="uptime-display" class="font-mono text-slate-200">0s</span></span>
             </div>
             <button id="toggle-engine-btn" onclick="toggleEngine()" class="px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white">
                 <i class="fa-solid fa-pause"></i> <span>Pause</span>
@@ -69,15 +78,15 @@
     <main class="flex-1 p-6 space-y-6 max-w-7xl mx-auto w-full">
 
         <!-- KPI Metrics Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
             <!-- Total Equity -->
             <div class="bg-darkCard border border-darkBorder rounded-xl p-4 flex flex-col justify-between shadow-sm">
                 <div class="flex items-center justify-between text-slate-400 text-xs">
-                    <span>Total Portfolio Equity</span>
+                    <span>Total Equity</span>
                     <i class="fa-solid fa-wallet text-emerald-400 text-sm"></i>
                 </div>
                 <div class="mt-2">
-                    <div id="kpi-equity" class="text-2xl font-bold text-white font-mono">$50.00</div>
+                    <div id="kpi-equity" class="text-xl font-bold text-white font-mono">$50.00</div>
                     <div id="kpi-return-pct" class="text-xs text-emerald-400 font-medium mt-0.5">+0.00%</div>
                 </div>
             </div>
@@ -89,8 +98,8 @@
                     <i class="fa-solid fa-money-bill-trend-up text-indigo-400 text-sm"></i>
                 </div>
                 <div class="mt-2">
-                    <div id="kpi-pnl" class="text-2xl font-bold text-white font-mono">+$0.00</div>
-                    <div class="text-xs text-slate-400 mt-0.5">Real fees & gas deducted</div>
+                    <div id="kpi-pnl" class="text-xl font-bold text-white font-mono">+$0.00</div>
+                    <div class="text-[11px] text-slate-400 mt-0.5">Post-gas & fees</div>
                 </div>
             </div>
 
@@ -101,8 +110,8 @@
                     <i class="fa-solid fa-coins text-amber-400 text-sm"></i>
                 </div>
                 <div class="mt-2">
-                    <div id="kpi-cash" class="text-2xl font-bold text-white font-mono">$50.00</div>
-                    <div class="text-xs text-slate-400 mt-0.5">Locked: <span id="kpi-locked" class="font-mono text-slate-300">$0.00</span></div>
+                    <div id="kpi-cash" class="text-xl font-bold text-white font-mono">$50.00</div>
+                    <div class="text-[11px] text-slate-400 mt-0.5">Locked: <span id="kpi-locked" class="font-mono text-slate-300">$0.00</span></div>
                 </div>
             </div>
 
@@ -113,8 +122,8 @@
                     <i class="fa-solid fa-satellite-dish text-sky-400 text-sm"></i>
                 </div>
                 <div class="mt-2">
-                    <div id="kpi-events-count" class="text-2xl font-bold text-white font-mono">0</div>
-                    <div class="text-xs text-slate-400 mt-0.5">Multi-outcome baskets</div>
+                    <div class="text-xl font-bold text-white font-mono"><span id="kpi-events-count">25</span> <span class="text-xs text-slate-400 font-normal">Events</span></div>
+                    <div class="text-[11px] text-slate-400 mt-0.5"><span id="kpi-tokens-count" class="font-mono text-slate-300">0</span> live order books</div>
                 </div>
             </div>
 
@@ -125,8 +134,36 @@
                     <i class="fa-solid fa-layer-group text-purple-400 text-sm"></i>
                 </div>
                 <div class="mt-2">
-                    <div id="kpi-positions-count" class="text-2xl font-bold text-white font-mono">0</div>
-                    <div class="text-xs text-slate-400 mt-0.5">Dynamic rebalancing on</div>
+                    <div id="kpi-positions-count" class="text-xl font-bold text-white font-mono">0</div>
+                    <div class="text-[11px] text-slate-400 mt-0.5">Dynamic rebalance on</div>
+                </div>
+            </div>
+
+            <!-- Server Resources (CPU & RAM) -->
+            <div class="bg-darkCard border border-darkBorder rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                <div class="flex items-center justify-between text-slate-400 text-xs">
+                    <span>Server Resources</span>
+                    <i class="fa-solid fa-server text-cyan-400 text-sm"></i>
+                </div>
+                <div class="mt-2 space-y-1.5">
+                    <div>
+                        <div class="flex items-center justify-between text-[11px] font-mono">
+                            <span class="text-slate-400">CPU</span>
+                            <span id="kpi-cpu" class="text-cyan-300 font-semibold">0.0%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-1 mt-0.5 overflow-hidden">
+                            <div id="kpi-cpu-bar" class="bg-cyan-400 h-1 rounded-full transition-all duration-300" style="width: 5%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex items-center justify-between text-[11px] font-mono">
+                            <span class="text-slate-400">RAM</span>
+                            <span id="kpi-ram" class="text-violet-300 font-semibold">0 MB</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-1 mt-0.5 overflow-hidden">
+                            <div id="kpi-ram-bar" class="bg-violet-400 h-1 rounded-full transition-all duration-300" style="width: 10%"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

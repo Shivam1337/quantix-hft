@@ -30,6 +30,7 @@ services:
       - ARB_SPREAD_THRESHOLD=0.003
       - GAS_FEE_USD=0.005
       - MAX_POSITION_PCT=0.50
+      - MONITORED_EVENTS_LIMIT=25
     ports:
       - "${PORT:-8000}:8000"
     healthcheck:

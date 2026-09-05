@@ -51,173 +51,219 @@ class LiveMarketFeed:
         logger.info("Live market feed stopped.")
 
     async def discover_active_events(self):
-        """Fetches high-volume active NegRisk and combinatorial multi-outcome events from Polymarket Gamma API."""
+        """
+        Fetches high-volume active NegRisk and combinatorial events from Polymarket Gamma API,
+        specifically targeting and prioritizing high-moving crypto markets (BTC, ETH, SOL, XRP, etc.)
+        alongside top macro/sports events.
+        """
         if not self.session or self.session.closed:
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
 
-        url = f"{settings.GAMMA_API_BASE}/events"
-        params = {
-            "active": "true",
-            "closed": "false",
-            "order": "volume24hr",
-            "ascending": "false",
-            "limit": "100"
+        crypto_keywords = {
+            "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto",
+            "xrp", "binance", "coinbase", "doge", "pepe", "tether", "usdt"
         }
+
         try:
-            async with self.session.get(url, params=params) as resp:
-                if resp.status != 200:
-                    logger.error(f"Gamma API error: {resp.status}")
-                    return
+            # Concurrently query dedicated crypto events and top general volume events
+            crypto_task = self.session.get(
+                f"{settings.GAMMA_API_BASE}/events",
+                params={"active": "true", "closed": "false", "tag_slug": "crypto", "order": "volume24hr", "ascending": "false", "limit": "50"}
+            )
+            general_task = self.session.get(
+                f"{settings.GAMMA_API_BASE}/events",
+                params={"active": "true", "closed": "false", "order": "volume24hr", "ascending": "false", "limit": "60"}
+            )
+            resps = await asyncio.gather(crypto_task, general_task, return_exceptions=True)
 
-                data = await resp.json()
-                if not isinstance(data, list):
-                    return
+            merged_events = {}
 
-                discovered = 0
-                for event in data:
-                    if not isinstance(event, dict):
-                        continue
-                    markets = event.get("markets", [])
-                    if not isinstance(markets, list):
-                        continue
+            # 1. Process dedicated crypto events
+            if not isinstance(resps[0], Exception) and resps[0].status == 200:
+                c_data = await resps[0].json()
+                if isinstance(c_data, list):
+                    for e in c_data:
+                        if isinstance(e, dict):
+                            e["is_crypto"] = True
+                            merged_events[str(e.get("id"))] = e
 
-                    # Filter for true combinatorial / NegRisk events:
-                    # 1. Flagged as NegRisk (mutually exclusive outcomes where sum(P) = 1.0)
-                    # 2. 3-way match outcomes (Home, Draw, Away)
-                    # 3. High volume binary markets (YES + NO pair where sum(P) = 1.0)
-                    is_neg_risk = any(m.get("negRisk") is True for m in markets)
-                    is_three_way = (
-                        len(markets) == 3 and
-                        any("win" in m.get("question", "").lower() or "draw" in m.get("question", "").lower() for m in markets)
-                    )
+            # 2. Process general high-volume events
+            if not isinstance(resps[1], Exception) and resps[1].status == 200:
+                g_data = await resps[1].json()
+                if isinstance(g_data, list):
+                    for e in g_data:
+                        if isinstance(e, dict):
+                            eid = str(e.get("id"))
+                            if eid not in merged_events:
+                                t_low = (e.get("title") or "").lower()
+                                e["is_crypto"] = any(k in t_low for k in crypto_keywords)
+                                merged_events[eid] = e
 
-                    event_id = str(event.get("id"))
-                    parsed_markets = []
+            # Filter candidates for valid combinatorial baskets
+            candidate_events = []
+            for event in merged_events.values():
+                markets = event.get("markets", [])
+                if not isinstance(markets, list) or len(markets) == 0:
+                    continue
 
-                    if (is_neg_risk or is_three_way) and 2 <= len(markets) <= 12:
-                        for m in markets:
-                            if not isinstance(m, dict):
-                                continue
-                            clob_tokens = m.get("clobTokenIds")
-                            if isinstance(clob_tokens, str):
-                                try:
-                                    clob_tokens = json.loads(clob_tokens)
-                                except Exception:
-                                    continue
-                            if clob_tokens and len(clob_tokens) >= 1:
-                                token_id = str(clob_tokens[0])
-                                # Extract real prices from Gamma market metadata
-                                ask_val = float(m["bestAsk"]) if m.get("bestAsk") is not None else None
-                                bid_val = float(m["bestBid"]) if m.get("bestBid") is not None else None
-                                parsed_markets.append({
-                                    "market_id": str(m.get("id")),
-                                    "question": m.get("question"),
-                                    "outcome_name": m.get("groupItemTitle") or m.get("question"),
-                                    "condition_id": m.get("conditionId"),
-                                    "token_id": token_id,
-                                    "initial_ask": ask_val,
-                                    "initial_bid": bid_val
-                                })
+                is_neg_risk = any(m.get("negRisk") is True for m in markets)
+                is_three_way = (
+                    len(markets) == 3 and
+                    any("win" in m.get("question", "").lower() or "draw" in m.get("question", "").lower() for m in markets)
+                )
 
-                    # Also support single-market binary events (YES and NO token pair)
-                    elif len(markets) == 1:
-                        m = markets[0]
+                # Check if multi-bracket NegRisk / 3-way match
+                if (is_neg_risk or is_three_way) and 2 <= len(markets) <= 15:
+                    candidate_events.append(event)
+                # Or binary event with YES + NO tokens
+                elif len(markets) == 1:
+                    m = markets[0]
+                    clob_tokens = m.get("clobTokenIds")
+                    if isinstance(clob_tokens, str):
+                        try:
+                            clob_tokens = json.loads(clob_tokens)
+                        except Exception:
+                            clob_tokens = None
+                    if clob_tokens and len(clob_tokens) == 2:
+                        candidate_events.append(event)
+
+            # Prioritize fast-moving crypto events, then high volume
+            candidate_events.sort(
+                key=lambda x: (x.get("is_crypto", False), float(x.get("volume", 0) or 0.0)),
+                reverse=True
+            )
+
+            discovered = 0
+            for event in candidate_events:
+                event_id = str(event.get("id"))
+                markets = event.get("markets", [])
+                is_crypto = event.get("is_crypto", False)
+                parsed_markets = []
+
+                if len(markets) >= 2:
+                    for m in markets:
+                        if not isinstance(m, dict):
+                            continue
                         clob_tokens = m.get("clobTokenIds")
                         if isinstance(clob_tokens, str):
                             try:
                                 clob_tokens = json.loads(clob_tokens)
                             except Exception:
-                                clob_tokens = None
-                        if clob_tokens and len(clob_tokens) == 2:
-                            yes_token = str(clob_tokens[0])
-                            no_token = str(clob_tokens[1])
-                            yes_ask = float(m["bestAsk"]) if m.get("bestAsk") is not None else None
-                            yes_bid = float(m["bestBid"]) if m.get("bestBid") is not None else None
-                            if yes_ask is not None:
-                                no_ask = round(1.0 - (yes_bid if yes_bid is not None else (yes_ask - 0.02)), 4)
-                                no_bid = round(1.0 - yes_ask, 4)
-                                parsed_markets.append({
-                                    "market_id": str(m.get("id")),
-                                    "question": m.get("question"),
-                                    "outcome_name": "YES",
-                                    "condition_id": m.get("conditionId"),
-                                    "token_id": yes_token,
-                                    "initial_ask": yes_ask,
-                                    "initial_bid": yes_bid
-                                })
-                                parsed_markets.append({
-                                    "market_id": str(m.get("id")),
-                                    "question": m.get("question"),
-                                    "outcome_name": "NO",
-                                    "condition_id": m.get("conditionId"),
-                                    "token_id": no_token,
-                                    "initial_ask": no_ask,
-                                    "initial_bid": no_bid
-                                })
+                                continue
+                        if clob_tokens and len(clob_tokens) >= 1:
+                            token_id = str(clob_tokens[0])
+                            ask_val = float(m["bestAsk"]) if m.get("bestAsk") is not None else None
+                            bid_val = float(m["bestBid"]) if m.get("bestBid") is not None else None
+                            parsed_markets.append({
+                                "market_id": str(m.get("id")),
+                                "question": m.get("question"),
+                                "outcome_name": m.get("groupItemTitle") or m.get("question"),
+                                "condition_id": m.get("conditionId"),
+                                "token_id": token_id,
+                                "initial_ask": ask_val,
+                                "initial_bid": bid_val
+                            })
+                elif len(markets) == 1:
+                    m = markets[0]
+                    clob_tokens = m.get("clobTokenIds")
+                    if isinstance(clob_tokens, str):
+                        try:
+                            clob_tokens = json.loads(clob_tokens)
+                        except Exception:
+                            clob_tokens = None
+                    if clob_tokens and len(clob_tokens) == 2:
+                        yes_token = str(clob_tokens[0])
+                        no_token = str(clob_tokens[1])
+                        yes_ask = float(m["bestAsk"]) if m.get("bestAsk") is not None else None
+                        yes_bid = float(m["bestBid"]) if m.get("bestBid") is not None else None
+                        if yes_ask is not None:
+                            no_ask = round(1.0 - (yes_bid if yes_bid is not None else (yes_ask - 0.02)), 4)
+                            no_bid = round(1.0 - yes_ask, 4)
+                            parsed_markets.append({
+                                "market_id": str(m.get("id")),
+                                "question": m.get("question"),
+                                "outcome_name": "YES",
+                                "condition_id": m.get("conditionId"),
+                                "token_id": yes_token,
+                                "initial_ask": yes_ask,
+                                "initial_bid": yes_bid
+                            })
+                            parsed_markets.append({
+                                "market_id": str(m.get("id")),
+                                "question": m.get("question"),
+                                "outcome_name": "NO",
+                                "condition_id": m.get("conditionId"),
+                                "token_id": no_token,
+                                "initial_ask": no_ask,
+                                "initial_bid": no_bid
+                            })
 
-                    if len(parsed_markets) >= 2:
-                        self.monitored_events[event_id] = {
-                            "id": event_id,
-                            "title": event.get("title") or event.get("question"),
-                            "slug": event.get("slug"),
-                            "volume": float(event.get("volume") or 0.0),
-                            "markets": parsed_markets
-                        }
+                if len(parsed_markets) >= 2:
+                    self.monitored_events[event_id] = {
+                        "id": event_id,
+                        "title": event.get("title") or event.get("question"),
+                        "slug": event.get("slug"),
+                        "volume": float(event.get("volume") or 0.0),
+                        "is_crypto": is_crypto,
+                        "markets": parsed_markets
+                    }
 
-                        # Seed initial order books with real Gamma prices
-                        for pm in parsed_markets:
-                            if pm["initial_ask"] is not None:
-                                init_ask = pm["initial_ask"]
-                                init_bid = pm["initial_bid"] or max(0.001, round(init_ask - 0.01, 3))
-                                self.order_books[pm["token_id"]] = {
-                                    "bid": init_bid,
-                                    "ask": init_ask,
-                                    "mid": round((init_bid + init_ask) / 2.0, 4),
-                                    "bid_depth": 100.0,
-                                    "ask_depth": 100.0,
-                                    "updated_at": time.time()
-                                }
+                    # Seed initial order books with real Gamma prices
+                    for pm in parsed_markets:
+                        if pm["initial_ask"] is not None:
+                            init_ask = pm["initial_ask"]
+                            init_bid = pm["initial_bid"] or max(0.001, round(init_ask - 0.01, 3))
+                            self.order_books[pm["token_id"]] = {
+                                "bid": init_bid,
+                                "ask": init_ask,
+                                "mid": round((init_bid + init_ask) / 2.0, 4),
+                                "bid_depth": 100.0,
+                                "ask_depth": 100.0,
+                                "updated_at": time.time()
+                            }
 
-                        # Persist to database
+                    # Persist to database
+                    await db.execute(
+                        """
+                        INSERT INTO events (event_id, title, slug, volume, markets_count, updated_at)
+                        VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+                        ON CONFLICT (event_id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            volume = EXCLUDED.volume,
+                            markets_count = EXCLUDED.markets_count,
+                            updated_at = CURRENT_TIMESTAMP
+                        """,
+                        event_id,
+                        event.get("title") or event.get("question"),
+                        event.get("slug"),
+                        float(event.get("volume") or 0.0),
+                        len(parsed_markets)
+                    )
+
+                    for pm in parsed_markets:
+                        latest_p = pm["initial_ask"] or 0.0
                         await db.execute(
                             """
-                            INSERT INTO events (event_id, title, slug, volume, markets_count, updated_at)
+                            INSERT INTO tokens (token_id, event_id, outcome_name, condition_id, latest_price, updated_at)
                             VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-                            ON CONFLICT (event_id) DO UPDATE SET
-                                volume = EXCLUDED.volume,
-                                markets_count = EXCLUDED.markets_count,
+                            ON CONFLICT (token_id) DO UPDATE SET
+                                outcome_name = EXCLUDED.outcome_name,
+                                latest_price = EXCLUDED.latest_price,
                                 updated_at = CURRENT_TIMESTAMP
                             """,
+                            pm["token_id"],
                             event_id,
-                            event.get("title") or event.get("question"),
-                            event.get("slug"),
-                            float(event.get("volume") or 0.0),
-                            len(parsed_markets)
+                            pm["outcome_name"],
+                            pm["condition_id"],
+                            latest_p
                         )
 
-                        for pm in parsed_markets:
-                            latest_p = pm["initial_ask"] or 0.0
-                            await db.execute(
-                                """
-                                INSERT INTO tokens (token_id, event_id, outcome_name, condition_id, latest_price, updated_at)
-                                VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-                                ON CONFLICT (token_id) DO UPDATE SET
-                                    outcome_name = EXCLUDED.outcome_name,
-                                    latest_price = EXCLUDED.latest_price,
-                                    updated_at = CURRENT_TIMESTAMP
-                                """,
-                                pm["token_id"],
-                                event_id,
-                                pm["outcome_name"],
-                                pm["condition_id"],
-                                latest_p
-                            )
+                    discovered += 1
+                    if discovered >= settings.MONITORED_EVENTS_LIMIT:
+                        break
 
-                        discovered += 1
-                        if discovered >= settings.MONITORED_EVENTS_LIMIT:
-                            break
-
-                logger.info(f"Discovered and persisted {len(self.monitored_events)} active combinatorial events.")
+            crypto_count = sum(1 for e in self.monitored_events.values() if e.get("is_crypto"))
+            logger.info(f"Discovered and persisted {len(self.monitored_events)} events ({crypto_count} high-moving crypto).")
 
         except Exception as e:
             logger.error(f"Error during event discovery: {e}")
@@ -237,6 +283,8 @@ class LiveMarketFeed:
             async with self.session.get(url, params=params) as resp:
                 if resp.status == 200:
                     book = await resp.json()
+                    bids = book.get("bids", [])
+                    asks = book.get("asks", [])
                     # Polymarket CLOB order books require:
                     # - Best Bid: HIGHEST bid price (max)
                     # - Best Ask: LOWEST ask price (min)
@@ -344,6 +392,7 @@ class LiveMarketFeed:
             "event_id": event_id,
             "event_title": ev["title"],
             "outcomes_count": len(markets),
+            "is_crypto": ev.get("is_crypto", False),
             "basket_ask_sum": round(total_ask_sum, 4),
             "basket_bid_sum": round(total_bid_sum, 4),
             "outcomes": outcomes_info,

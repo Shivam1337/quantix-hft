@@ -89,6 +89,7 @@ class ArbitrageEngine:
                 "gross_spread": gross_spread,
                 "net_spread": net_spread,
                 "actionable": is_actionable,
+                "is_crypto": pricing.get("is_crypto", False),
                 "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pricing["timestamp"]))
             }
 

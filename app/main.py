@@ -130,6 +130,7 @@ async def get_status():
         "database_type": "PostgreSQL" if db.is_postgres else "SQLite",
         "uptime_seconds": uptime_sec,
         "monitored_events_count": len(live_feed.monitored_events),
+        "crypto_events_count": sum(1 for e in live_feed.monitored_events.values() if e.get("is_crypto", False)),
         "tracked_tokens_count": len(live_feed.order_books),
         "last_market_tick_ts": live_feed.last_update_ts,
         "is_engine_running": arb_engine.is_running,
@@ -207,6 +208,7 @@ async def event_stream(request: Request):
                 "open_positions": list(simulator.open_positions.values()),
                 "status": {
                     "events_count": len(live_feed.monitored_events),
+                    "crypto_events_count": sum(1 for e in live_feed.monitored_events.values() if e.get("is_crypto", False)),
                     "tokens_count": len(live_feed.order_books),
                     "db_type": "PostgreSQL" if db.is_postgres else "SQLite",
                     "uptime": round(time.time() - start_time, 0)

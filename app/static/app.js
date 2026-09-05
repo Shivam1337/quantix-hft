@@ -102,6 +102,10 @@ function updateDashboard(data) {
     document.getElementById('kpi-cash').innerText = `$${p.cash.toFixed(2)}`;
     document.getElementById('kpi-locked').innerText = `$${p.locked_capital.toFixed(2)}`;
     document.getElementById('kpi-events-count').innerText = status.events_count || 0;
+    const cryptoEl = document.getElementById('kpi-crypto-count');
+    if (cryptoEl && status.crypto_events_count !== undefined) {
+        cryptoEl.innerText = status.crypto_events_count;
+    }
     const tokensEl = document.getElementById('kpi-tokens-count');
     if (tokensEl && status.tokens_count !== undefined) {
         tokensEl.innerText = status.tokens_count;
@@ -171,9 +175,13 @@ function renderOpportunities(opps, threshold) {
             ? `<span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded text-[11px] font-bold">ACTIONABLE (+${(op.net_spread * 100).toFixed(2)}%)</span>`
             : `<span class="bg-slate-700/40 text-slate-400 px-2 py-0.5 rounded text-[11px]">WATCHING (${(op.net_spread * 100).toFixed(2)}%)</span>`;
 
+        const cryptoBadge = op.is_crypto
+            ? `<span class="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold mr-1.5 inline-flex items-center gap-1"><i class="fa-brands fa-bitcoin"></i> CRYPTO</span>`
+            : '';
+
         return `
             <tr class="hover:bg-slate-800/40 transition">
-                <td class="py-2.5 px-3 font-sans font-medium text-slate-200">${op.event_title}</td>
+                <td class="py-2.5 px-3 font-sans font-medium text-slate-200">${cryptoBadge}${op.event_title}</td>
                 <td class="py-2.5 px-3 text-slate-400">${op.outcomes_count} mkts</td>
                 <td class="py-2.5 px-3 font-bold text-slate-200">$${op.basket_sum.toFixed(3)}</td>
                 <td class="py-2.5 px-3 text-slate-300">${(op.gross_spread * 100).toFixed(2)}%</td>

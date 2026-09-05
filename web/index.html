@@ -20,6 +20,7 @@
                         <span id="status-indicator" class="status-indicator stopped">
                             <span class="status-dot"></span> <span id="status-text">STOPPED</span>
                         </span>
+                        <span id="pair-status-badge" class="badge-sim" style="background: #0284c7; color: #fff; font-weight: 600;">PAIR: ACTIVE</span>
                         <span id="circuit-breaker-badge" class="badge-breaker" style="display: none;">PULLED: SPREAD COMPRESSED</span>
                     </div>
                 </div>
@@ -28,11 +29,19 @@
             <div class="metric-tiles">
                 <div class="metric-tile">
                     <span class="tile-label">TOTAL EQUITY</span>
-                    <span id="equity-val" class="tile-value">$1,000.00</span>
+                    <span id="equity-val" class="tile-value">$50.00</span>
                 </div>
                 <div class="metric-tile">
                     <span class="tile-label">NET P&L</span>
                     <span id="pnl-val" class="tile-value pnl-neutral">+$0.00 (+0.00%)</span>
+                </div>
+                <div class="metric-tile">
+                    <span class="tile-label">ROTATION CLOCK</span>
+                    <span id="rotation-countdown-val" class="tile-value" style="color: #0284c7;">15:00</span>
+                </div>
+                <div class="metric-tile">
+                    <span class="tile-label">ACTIVE PAIR P&L</span>
+                    <span id="pair-pnl-val" class="tile-value pnl-neutral">+$0.00</span>
                 </div>
                 <div class="metric-tile">
                     <span class="tile-label">INVENTORY</span>
@@ -60,26 +69,47 @@
             <section class="card config-card">
                 <div class="card-header">
                     <h2>ENGINE CONTROLS</h2>
-                    <button id="btn-scan" class="btn-sm btn-outline">⚡ Scan Pairs</button>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="btn-rotate" class="btn-sm btn-outline" title="Force clean offload & rotate to best pair">🔄 Rotate Pair</button>
+                        <button id="btn-scan" class="btn-sm btn-outline">⚡ Scan Pairs</button>
+                    </div>
                 </div>
 
                 <div class="form-group">
                     <label for="coin-select">Target Asset</label>
                     <div class="input-with-action">
                         <select id="coin-select" class="form-control">
-                            <option value="PONS">PONS (High Vol + 11.1 bps Spread)</option>
-                            <option value="CASHCAT">CASHCAT (6.6 bps Spread)</option>
+                            <option value="PONS">PONS (High Vol + 7.8 bps Spread)</option>
+                            <option value="CASHCAT">CASHCAT (11.9 bps Spread)</option>
                             <option value="PURR">PURR (22.9 bps Spread)</option>
+                            <option value="AZTEC">AZTEC (5.4 bps Spread)</option>
+                            <option value="GRAM">GRAM (4.9 bps Spread)</option>
+                            <option value="APEX">APEX (4.8 bps Spread)</option>
                             <option value="NEAR">NEAR (3.1 bps Spread)</option>
                             <option value="TRUMP">TRUMP (3.4 bps Spread)</option>
-                            <option value="HYPE">HYPE (Liquid Core / 0.12 bps)</option>
                         </select>
                     </div>
                 </div>
 
                 <div class="form-group">
-                    <label>Quote Size ($ Notional per Side)</label>
-                    <input type="number" id="order-size-input" class="form-control" value="50" min="10" max="500" step="10">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label for="auto-rotate-toggle" style="margin-bottom: 0; cursor: pointer;">Dynamic Pair Hunter (15m)</label>
+                        <input type="checkbox" id="auto-rotate-toggle" checked style="width: 18px; height: 18px; cursor: pointer;">
+                    </div>
+                    <span class="slider-hint">Keeps coin while profitable; offloads 100% and rotates every ~15m</span>
+                </div>
+
+                <div class="form-group">
+                    <label>Max Quote Size ($ Max per Side)</label>
+                    <input type="number" id="order-size-input" class="form-control" value="10" min="5" max="100" step="5">
+                </div>
+
+                <div class="form-group">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label for="dynamic-sizing-toggle" style="margin-bottom: 0; cursor: pointer;">Adaptive Dynamic Sizing</label>
+                        <input type="checkbox" id="dynamic-sizing-toggle" checked style="width: 18px; height: 18px; cursor: pointer;">
+                    </div>
+                    <span class="slider-hint">Scales quote sizes between $3.00 & max size based on book pressure and profits</span>
                 </div>
 
                 <div class="form-group">
@@ -120,7 +150,7 @@
 
                 <div class="form-group">
                     <label>Max Inventory ($ USD Limit)</label>
-                    <input type="number" id="max-inv-input" class="form-control" value="200" min="50" max="1000" step="25">
+                    <input type="number" id="max-inv-input" class="form-control" value="25" min="10" max="100" step="5">
                 </div>
 
                 <div class="fee-info-box">
@@ -187,7 +217,7 @@
                     <div id="our-ask-callout" class="our-quote-banner ask-banner">
                         <span class="banner-tag">OUR ACTIVE ASK:</span>
                         <span id="our-ask-price" class="banner-price">--</span>
-                        <span class="banner-desc">Post-Only Limit</span>
+                        <span id="our-ask-notional" class="banner-desc">Post-Only Limit</span>
                     </div>
 
                     <!-- SPREAD DIVIDER -->
@@ -199,7 +229,7 @@
                     <div id="our-bid-callout" class="our-quote-banner bid-banner">
                         <span class="banner-tag">OUR ACTIVE BID:</span>
                         <span id="our-bid-price" class="banner-price">--</span>
-                        <span class="banner-desc">Post-Only Limit</span>
+                        <span id="our-bid-notional" class="banner-desc">Post-Only Limit</span>
                     </div>
 
                     <!-- BIDS (Green) -->
@@ -240,6 +270,32 @@
                         <tbody id="fills-tbody">
                             <tr class="empty-row">
                                 <td colspan="6">No simulated fills yet. Start engine to quote inside the spread.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="card-header mt-4">
+                    <h2>PAIR ROTATION HISTORY</h2>
+                    <span id="rotations-count-badge" class="badge-sub">0 Rotations</span>
+                </div>
+
+                <div class="fills-table-container" style="max-height: 140px; overflow-y: auto;">
+                    <table class="fills-table">
+                        <thead>
+                            <tr>
+                                <th>TIME</th>
+                                <th>FROM</th>
+                                <th>TO</th>
+                                <th>DUR</th>
+                                <th>PAIR P&L</th>
+                                <th>FILLS</th>
+                                <th>REASON</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rotations-tbody">
+                            <tr class="empty-row">
+                                <td colspan="7">No rotations yet. Rotates dynamically every ~15m.</td>
                             </tr>
                         </tbody>
                     </table>

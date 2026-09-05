@@ -146,7 +146,7 @@ class AvellanedaStoikovModel:
         beta_ofi: float = 0.5,        # Sensitivity to OFI (fraction of half-spread)
         tick_size: float = 0.0001,    # Minimum price tick
         min_spread_bps: float = 2.0,  # Target half-spread in bps
-        max_inventory_usd: float = 250.0  # Max inventory for normalization
+        max_inventory_usd: float = 25.0  # Max inventory for normalization ($50 capital scale)
     ):
         self.gamma = gamma
         self.kappa = kappa
@@ -255,3 +255,74 @@ class AvellanedaStoikovModel:
             ask = bid + self.tick_size
 
         return round(bid, 8), round(ask, 8)
+
+    def compute_dynamic_sizes(
+        self,
+        mid_price: float,
+        max_order_size_usd: float,
+        min_order_size_usd: float,
+        inventory_usd: float,
+        max_inventory_usd: float,
+        ofi: float = 0.0,
+        book_imbalance: float = 0.0,
+        pair_pnl: float = 0.0
+    ) -> Tuple[float, float, float, float]:
+        """
+        Computes asymmetric dynamic quote sizes for bid and ask sides based on:
+        1. Profit momentum: Scaling up when pair is profitable, contracting in drawdowns.
+        2. Order book pressure: Positive OFI / bid depth expands bid & shrinks ask; negative OFI expands ask & shrinks bid.
+        3. Inventory headroom: Strictly clamps sizes so fills cannot breach max inventory.
+
+        Returns:
+            (bid_qty, ask_qty, bid_usd, ask_usd)
+        """
+        if mid_price <= 0:
+            return 0.0, 0.0, 0.0, 0.0
+
+        # Baseline notional size (70% of max size)
+        base_size = max(max_order_size_usd * 0.70, min_order_size_usd)
+
+        # 1. Profit Momentum Multiplier
+        # In profit (e.g. +$1.50), scales up to 1.35x. In drawdown (-$1.00), scales down to 0.65x
+        if pair_pnl >= 0:
+            profit_mult = 1.0 + 0.35 * math.tanh(pair_pnl / 1.5)
+        else:
+            profit_mult = 1.0 - 0.35 * math.tanh(abs(pair_pnl) / 1.0)
+
+        # 2. Combined Order Book Pressure in [-1, +1]
+        ofi_norm = math.tanh(ofi / 50.0)
+        net_pressure = float(np.clip(0.6 * ofi_norm + 0.4 * book_imbalance, -1.0, 1.0))
+
+        # Asymmetric Pressure Multipliers:
+        # Bullish pressure (+net_pressure): Expand bid (strong support), contract ask (avoid toxic buy sweeps)
+        # Bearish pressure (-net_pressure): Expand ask (strong selling), contract bid (avoid knife catching)
+        if net_pressure >= 0:
+            bid_pressure_mult = 1.0 + (0.35 * net_pressure)
+            ask_pressure_mult = 1.0 - (0.50 * net_pressure)
+        else:
+            bid_pressure_mult = 1.0 + (0.50 * net_pressure)  # net_pressure is negative, so decreases
+            ask_pressure_mult = 1.0 - (0.35 * net_pressure)  # net_pressure is negative, so increases
+
+        # Calculate unconstrained notionals
+        raw_bid_usd = base_size * profit_mult * bid_pressure_mult
+        raw_ask_usd = base_size * profit_mult * ask_pressure_mult
+
+        # Clamp between min_order_size_usd and max_order_size_usd
+        bid_usd = float(np.clip(raw_bid_usd, min_order_size_usd, max_order_size_usd))
+        ask_usd = float(np.clip(raw_ask_usd, min_order_size_usd, max_order_size_usd))
+
+        # 3. Inventory Headroom Clamping
+        # If long inventory is close to max, bid must not exceed remaining room
+        room_long = max(0.0, max_inventory_usd - inventory_usd)
+        if bid_usd > room_long:
+            bid_usd = max(room_long, 0.0)
+
+        # If short inventory is close to -max, ask must not exceed remaining short room
+        room_short = max(0.0, max_inventory_usd + inventory_usd)
+        if ask_usd > room_short:
+            ask_usd = max(room_short, 0.0)
+
+        bid_qty = round(bid_usd / mid_price, 4) if bid_usd >= min_order_size_usd else 0.0
+        ask_qty = round(ask_usd / mid_price, 4) if ask_usd >= min_order_size_usd else 0.0
+
+        return bid_qty, ask_qty, round(bid_usd, 2), round(ask_usd, 2)

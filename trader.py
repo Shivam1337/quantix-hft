@@ -27,22 +27,40 @@ class LiveHFTTrader:
         self.mode = "SIMULATED"   # SIMULATED (future: LIVE)
         self.session_id: Optional[int] = None
 
-        # Configurable Parameters
+        # Configurable Parameters ($50 Capital & $10 Sizing Scale)
         self.coin = "PONS"
-        self.order_size_usd = 50.0
+        self.order_size_usd = 10.0        # Default max order size $10
+        self.min_order_size_usd = 3.0     # Minimum order size floor
+        self.dynamic_sizing = True        # Order book pressure & profit adaptive sizing
         self.gamma = 0.6
         self.kappa = 1.5
         self.beta_ofi = 0.7
         self.min_spread_bps = 2.0
         self.min_market_spread_bps = 4.5  # Gatekeeper: only quote when book spread >= 4.5 bps
-        self.max_inventory_usd = 200.0
+        self.max_inventory_usd = 25.0     # Max inventory $25 for $50 capital
         self.maker_fee_rate = 0.00015     # 0.015% Hyperliquid real base maker fee
         self.taker_fee_rate = 0.00045     # 0.045% Hyperliquid real base taker fee
         self.latency_ms = 10.0
 
-        # Financial State
-        self.initial_capital = 1000.0
-        self.cash = 1000.0
+        # Dynamic 15-Minute Pair Rotation Engine
+        self.auto_rotate = True
+        self.rotation_interval_sec = 900.0   # 15 mins base rotation window
+        self.min_pair_duration_sec = 600.0   # 10 mins minimum duration before evaluating rotation
+        self.max_pair_duration_sec = 1800.0  # 30 mins hard ceiling
+        self.trades_target_per_pair = 12     # Series of trades threshold
+        self.pair_start_time = time.time()
+        self.pair_start_equity = 50.0
+        self.pair_fills_count = 0
+        self.pair_status = "ACTIVE"          # "ACTIVE", "FLATTENING", "SWITCHING"
+        self.flattening_start_time = 0.0
+        self.rotation_reason = ""
+        self.rotation_history: List[Dict[str, Any]] = []
+        self._ws: Any = None
+        self._switching_lock = asyncio.Lock()
+
+        # Financial State ($50 Starting Capital)
+        self.initial_capital = 50.0
+        self.cash = 50.0
         self.inventory = 0.0
         self.entry_price = 0.0            # Weighted average entry price of inventory
         self.total_fees = 0.0
@@ -54,7 +72,7 @@ class LiveHFTTrader:
         self.circuit_breaker_reason = ""
         self.last_circuit_break_time = 0.0
 
-        # Market State
+        # Market State & Asymmetric Sizing
         self.mid_price = 0.0
         self.best_bid = 0.0
         self.best_ask = 0.0
@@ -64,6 +82,10 @@ class LiveHFTTrader:
         self.active_bid = 0.0
         self.active_ask = 0.0
         self.our_quote_size = 0.0
+        self.our_bid_size = 0.0
+        self.our_ask_size = 0.0
+        self.our_bid_usd = 10.0
+        self.our_ask_usd = 10.0
 
         # Queue / Latency Simulation
         self.pending_bid = 0.0
@@ -86,7 +108,16 @@ class LiveHFTTrader:
     def configure(self, config: Dict[str, Any]):
         """Updates strategy hyperparameters."""
         self.coin = config.get("coin", self.coin).upper()
+        if "initial_capital" in config:
+            self.initial_capital = float(config["initial_capital"])
+            if self.status == "STOPPED" and self.fills_count == 0:
+                self.cash = self.initial_capital
+                self.pair_start_equity = self.initial_capital
         self.order_size_usd = float(config.get("order_size_usd", self.order_size_usd))
+        if "min_order_size_usd" in config:
+            self.min_order_size_usd = float(config["min_order_size_usd"])
+        if "dynamic_sizing" in config:
+            self.dynamic_sizing = bool(config["dynamic_sizing"])
         self.gamma = float(config.get("gamma", self.gamma))
         self.beta_ofi = float(config.get("beta_ofi", self.beta_ofi))
         self.min_spread_bps = float(config.get("min_spread_bps", self.min_spread_bps))
@@ -95,6 +126,13 @@ class LiveHFTTrader:
         self.maker_fee_rate = float(config.get("maker_fee_rate", self.maker_fee_rate))
         self.taker_fee_rate = float(config.get("taker_fee_rate", self.taker_fee_rate))
         self.mode = config.get("mode", self.mode)
+
+        if "auto_rotate" in config:
+            self.auto_rotate = bool(config["auto_rotate"])
+        if "rotation_interval_min" in config:
+            self.rotation_interval_sec = float(config["rotation_interval_min"]) * 60.0
+        if "trades_target_per_pair" in config:
+            self.trades_target_per_pair = int(config["trades_target_per_pair"])
 
         # Infer tick size based on price
         tick_sz = 0.0001
@@ -117,7 +155,7 @@ class LiveHFTTrader:
         )
 
     def reset_account(self):
-        """Resets paper capital and clears performance history."""
+        """Resets paper capital to $50.00 and clears performance history."""
         self.cash = self.initial_capital
         self.inventory = 0.0
         self.entry_price = 0.0
@@ -125,10 +163,187 @@ class LiveHFTTrader:
         self.fills_count = 0
         self.price_history.clear()
         self.circuit_breaker_active = False
+        self.circuit_breaker_reason = ""
         self.recent_fills.clear()
         self.equity_history.clear()
         self.active_bid = 0.0
         self.active_ask = 0.0
+        self.our_quote_size = 0.0
+        self.our_bid_size = 0.0
+        self.our_ask_size = 0.0
+        self.our_bid_usd = self.order_size_usd
+        self.our_ask_usd = self.order_size_usd
+        self.pending_bid = 0.0
+        self.pending_ask = 0.0
+        self.pair_start_time = time.time()
+        self.pair_start_equity = self.cash
+        self.pair_fills_count = 0
+        self.pair_status = "ACTIVE"
+        self.rotation_reason = ""
+        self.rotation_history.clear()
+
+    async def find_best_pair(self, exclude_coin: Optional[str] = None) -> Optional[str]:
+        """Finds the best trading pair on Hyperliquid with high volume and widest spread."""
+        import requests
+        try:
+            def _fetch_candidates():
+                r = requests.post("https://api.hyperliquid.xyz/info", json={"type": "metaAndAssetCtxs"}, timeout=5).json()
+                universe = r[0]["universe"]
+                ctxs = r[1]
+                candidates = []
+                for u, c in zip(universe, ctxs):
+                    name = u["name"]
+                    vol = float(c.get("dayNtlVlm", 0))
+                    mark = float(c.get("markPx", 0))
+                    if vol > 300000 and mark > 0:
+                        candidates.append({"name": name, "vol": vol, "mark": mark})
+
+                candidates.sort(key=lambda x: x["vol"], reverse=True)
+                sample = candidates[:15] + candidates[-25:]
+
+                results = []
+                for c in sample:
+                    try:
+                        book = requests.post("https://api.hyperliquid.xyz/info", json={"type": "l2Book", "coin": c["name"]}, timeout=2).json()
+                        bids = book.get("levels", [[], []])[0]
+                        asks = book.get("levels", [[], []])[1]
+                        if bids and asks:
+                            bb = float(bids[0]["px"])
+                            ba = float(asks[0]["px"])
+                            spread_bps = (ba - bb) / bb * 10000.0
+                            top_depth = float(bids[0]["sz"]) * bb
+                            if spread_bps >= self.min_market_spread_bps:
+                                results.append({
+                                    "name": c["name"],
+                                    "spread_bps": spread_bps,
+                                    "vol": c["vol"],
+                                    "top_depth": top_depth
+                                })
+                    except Exception:
+                        pass
+
+                results.sort(key=lambda x: x["spread_bps"], reverse=True)
+                return results
+
+            results = await asyncio.to_thread(_fetch_candidates)
+            if not results:
+                return None
+
+            if exclude_coin:
+                alternatives = [r for r in results if r["name"] != exclude_coin]
+                if alternatives:
+                    return alternatives[0]["name"]
+
+            return results[0]["name"]
+        except Exception as e:
+            print(f"[Pair Hunter Error] Failed to scan pairs: {e}")
+            return None
+
+    def trigger_rotation(self, reason: str):
+        """Initiates graceful position offload and scheduled pair rotation."""
+        if self.pair_status in ("FLATTENING", "SWITCHING"):
+            return
+        self.pair_status = "FLATTENING"
+        self.flattening_start_time = time.time()
+        self.rotation_reason = reason
+        self.active_bid = 0.0
+        self.active_ask = float('inf')
+        self.pending_bid = 0.0
+        self.pending_ask = float('inf')
+        print(f"[Pair Rotation] Initiated offload for {self.coin}: {reason}")
+        if abs(self.inventory) < 1e-4:
+            asyncio.create_task(self._execute_coin_switch())
+
+    async def force_rotate(self, reason: str = "Manual User Rotation"):
+        """Forces an immediate offload and pair rotation."""
+        self.trigger_rotation(reason)
+
+    async def _execute_coin_switch(self):
+        """Cleanly rotates to the best scanned pair once inventory is strictly flat."""
+        async with self._switching_lock:
+            if self.pair_status == "SWITCHING":
+                return
+            self.pair_status = "SWITCHING"
+            now = time.time()
+
+            # Ensure inventory is strictly flat before moving on
+            if abs(self.inventory) >= 1e-4:
+                print(f"[Pair Rotation Warning] Residual inventory {self.inventory} detected before switch. Forcing flat.")
+                self.inventory = 0.0
+                self.entry_price = 0.0
+
+            old_coin = self.coin
+            duration = now - self.pair_start_time
+            current_eq = self.cash
+            pair_pnl = current_eq - self.pair_start_equity
+            pair_return_pct = (pair_pnl / max(self.pair_start_equity, 1.0)) * 100.0
+            fills_in_pair = self.pair_fills_count
+
+            # Log rotation in DB
+            asyncio.create_task(db.log_rotation(
+                session_id=self.session_id,
+                from_coin=old_coin,
+                to_coin="SCANNING...",
+                duration_sec=round(duration, 1),
+                pair_pnl=round(pair_pnl, 4),
+                pair_return_pct=round(pair_return_pct, 2),
+                fills_count=fills_in_pair,
+                reason=self.rotation_reason or "Dynamic Rotation"
+            ))
+
+            # Record in-memory rotation history
+            self.rotation_history.insert(0, {
+                "time": time.strftime("%H:%M:%S", time.localtime(now)),
+                "from_coin": old_coin,
+                "to_coin": "SCANNING...",
+                "duration_min": round(duration / 60.0, 1),
+                "pnl": round(pair_pnl, 2),
+                "return_pct": round(pair_return_pct, 2),
+                "fills": fills_in_pair,
+                "reason": self.rotation_reason or "Dynamic Rotation"
+            })
+
+            # Search for best pair
+            best_coin = await self.find_best_pair(exclude_coin=old_coin)
+            if not best_coin:
+                defaults = ["PONS", "CASHCAT", "PURR", "AZTEC", "GRAM"]
+                best_coin = next((c for c in defaults if c != old_coin), old_coin)
+
+            print(f"[Pair Rotation] Switching from {old_coin} -> {best_coin} (Past PnL: ${pair_pnl:+.2f})")
+            if self.rotation_history:
+                self.rotation_history[0]["to_coin"] = best_coin
+
+            # Switch active coin
+            new_coin = best_coin
+            old_coin_val = self.coin
+            self.coin = new_coin
+
+            # Resubscribe WebSocket feeds
+            if self._ws:
+                try:
+                    await self._ws.send(json.dumps({"method": "unsubscribe", "subscription": {"type": "l2Book", "coin": old_coin_val}}))
+                    await self._ws.send(json.dumps({"method": "unsubscribe", "subscription": {"type": "trades", "coin": old_coin_val}}))
+                    await self._ws.send(json.dumps({"method": "subscribe", "subscription": {"type": "l2Book", "coin": new_coin}}))
+                    await self._ws.send(json.dumps({"method": "subscribe", "subscription": {"type": "trades", "coin": new_coin}}))
+                except Exception as e:
+                    print(f"[Pair Rotation] WebSocket resubscribe error: {e}")
+
+            # Reset pair-level state
+            self.pair_start_time = time.time()
+            self.pair_start_equity = self.cash
+            self.pair_fills_count = 0
+            self.vol_estimator = RollingVolatility(window_size=50)
+            self.current_book = None
+            self.price_history.clear()
+            self.book_depth = {"bids": [], "asks": []}
+            self.active_bid = 0.0
+            self.active_ask = 0.0
+            self.pending_bid = 0.0
+            self.pending_ask = 0.0
+            self.circuit_breaker_active = False
+            self.circuit_breaker_reason = ""
+            self.rotation_reason = ""
+            self.pair_status = "ACTIVE"
 
     async def start(self, config: Optional[Dict[str, Any]] = None):
         """Starts the live market maker loop."""
@@ -140,6 +355,11 @@ class LiveHFTTrader:
                 self.configure(config)
 
             self.status = "RUNNING"
+            self.pair_start_time = time.time()
+            self.pair_start_equity = self.cash
+            self.pair_fills_count = 0
+            self.pair_status = "ACTIVE"
+
             # Persist new trading session in DB
             self.session_id = await db.create_session(
                 coin=self.coin,
@@ -160,6 +380,7 @@ class LiveHFTTrader:
                     pass
             self.active_bid = 0.0
             self.active_ask = 0.0
+            self.pair_status = "ACTIVE"
 
             # Finalize session in DB
             if self.session_id:
@@ -180,6 +401,7 @@ class LiveHFTTrader:
         while self.status == "RUNNING":
             try:
                 async with websockets.connect(self.WS_URL, ping_interval=20, ping_timeout=10) as ws:
+                    self._ws = ws
                     retry_delay = 2.0
                     # Subscribe to L2 Book and Trades
                     await ws.send(json.dumps({"method": "subscribe", "subscription": {"type": "l2Book", "coin": self.coin}}))
@@ -202,9 +424,14 @@ class LiveHFTTrader:
                 print(f"[Trader Error] {e}. Reconnecting in {retry_delay:.1f}s...")
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 1.5, 10.0)
+            finally:
+                self._ws = None
 
     def _handle_book_update(self, data: Dict[str, Any]):
         """Processes incoming L2 order book updates."""
+        if data.get("coin") and data.get("coin") != self.coin:
+            return  # Discard updates from previous coin during switch
+
         raw_bids = data.get("levels", [[], []])[0]
         raw_asks = data.get("levels", [[], []])[1]
         if not raw_bids or not raw_asks:
@@ -242,8 +469,116 @@ class LiveHFTTrader:
         if not self.model:
             self.configure({})
 
-        # 1. Minimum Market Spread Gatekeeper:
-        # Never quote when spread < min_market_spread_bps because round-trip fees (3 bps) exceed edge
+        inv_usd = self.inventory * mid
+        abs_inv_usd = abs(inv_usd)
+
+        # =========================================================================
+        # 1. FLATTENING & 100% OFF-LOAD BEFORE ROTATION
+        # =========================================================================
+        if self.pair_status == "FLATTENING":
+            abs_sz = abs(self.inventory)
+            if abs_sz < 1e-4 or abs_inv_usd < 0.1:
+                self.inventory = 0.0
+                self.entry_price = 0.0
+                asyncio.create_task(self._execute_coin_switch())
+                return
+
+            # If waiting for passive fill takes > 15 seconds, execute immediate taker liquidation
+            if (now - self.flattening_start_time) > 15.0:
+                exit_px = new_book.best_bid if self.inventory > 0 else new_book.best_ask
+                notional = abs_sz * exit_px
+                fee = notional * self.taker_fee_rate
+                self.cash += (self.inventory * exit_px) - fee
+                self.total_fees += fee
+                self.fills_count += 1
+                self.pair_fills_count += 1
+
+                asyncio.create_task(db.log_fill(
+                    session_id=self.session_id,
+                    coin=self.coin,
+                    side="OFFLOAD_SELL" if self.inventory > 0 else "OFFLOAD_BUY",
+                    price=exit_px,
+                    size=abs_sz,
+                    notional=notional,
+                    fee=fee,
+                    fee_type="TAKER",
+                    inventory_after=0.0,
+                    cash_after=self.cash
+                ))
+                self.recent_fills.insert(0, {
+                    "id": self.fills_count,
+                    "time": time.strftime("%H:%M:%S", time.localtime(now)),
+                    "side": "OFFLOAD_SELL" if self.inventory > 0 else "OFFLOAD_BUY",
+                    "price": round(exit_px, 6),
+                    "size": round(abs_sz, 4),
+                    "notional": round(notional, 2),
+                    "fee": round(fee, 4),
+                    "inventory_after": 0.0
+                })
+                self.inventory = 0.0
+                self.entry_price = 0.0
+                print(f"[Pair Rotation] Taker forced 100% offload of {self.coin} before switch.")
+                asyncio.create_task(self._execute_coin_switch())
+                return
+
+            # Passive aggressive offload quoting at top of book
+            if self.inventory > 0:
+                self.active_bid = 0.0
+                self.active_ask = new_book.best_ask
+                self.pending_bid = 0.0
+                self.pending_ask = new_book.best_ask
+            else:
+                self.active_ask = float('inf')
+                self.active_bid = new_book.best_bid
+                self.pending_ask = float('inf')
+                self.pending_bid = new_book.best_bid
+            self.our_quote_size = round(abs_sz, 4)
+            return
+
+        if self.pair_status == "SWITCHING":
+            self.active_bid = 0.0
+            self.active_ask = float('inf')
+            return
+
+        # =========================================================================
+        # 2. DYNAMIC LIFECYCLE & PAIR ROTATION LOGIC
+        # =========================================================================
+        if self.auto_rotate and self.pair_status == "ACTIVE":
+            pair_duration = now - self.pair_start_time
+            pair_equity = self.cash + inv_usd
+            pair_pnl = pair_equity - self.pair_start_equity
+            is_profitable = pair_pnl > 0.02
+            has_edge = (new_book.spread_bps >= self.min_market_spread_bps) and (not self.circuit_breaker_active)
+            series_done = self.pair_fills_count >= self.trades_target_per_pair
+
+            # Rule A: Stagnant liquidity (0 fills in 10 minutes) -> rotate to active pair
+            if pair_duration >= 600.0 and self.pair_fills_count == 0:
+                self.trigger_rotation("Stagnant orderbook (0 fills in 10m)")
+                return
+
+            # Rule B: Hard ceiling (30 mins) -> lock in gains and rotate
+            if pair_duration >= self.max_pair_duration_sec:
+                self.trigger_rotation(f"30-min window reached (PnL: ${pair_pnl:+.2f})")
+                return
+
+            # Rule C: Dynamic 15-minute rotation window
+            if pair_duration >= self.rotation_interval_sec:
+                # If currently profitable and order book still has wide spread/edge, dynamically stay!
+                if is_profitable and has_edge and (pair_duration < self.max_pair_duration_sec):
+                    pass # Keep riding the winning coin
+                else:
+                    self.trigger_rotation(f"15-min cycle reached (PnL: ${pair_pnl:+.2f}, edge tapering)")
+                    return
+
+            # Rule D: Series of trades completed & past 10m minimum, edge depleted or plateaued
+            if pair_duration >= self.min_pair_duration_sec and series_done and (not has_edge or not is_profitable):
+                self.trigger_rotation(f"Series of {self.pair_fills_count} trades done (no edge remaining)")
+                return
+
+        # =========================================================================
+        # 3. SAFETY CHECKS & CIRCUIT BREAKERS
+        # =========================================================================
+        # Gatekeeper: Never quote when book spread < min_market_spread_bps
         if new_book.spread_bps < self.min_market_spread_bps:
             self.active_bid = 0.0
             self.active_ask = float('inf')
@@ -253,7 +588,7 @@ class LiveHFTTrader:
             self.circuit_breaker_reason = f"Spread too tight ({new_book.spread_bps:.2f} < {self.min_market_spread_bps:.1f} bps)"
             return
 
-        # 2. Track 10-second Momentum
+        # Momentum tracking (10-second window)
         self.price_history.append((now, mid))
         self.price_history = [p for p in self.price_history if now - p[0] <= 10.0]
         momentum_bps = 0.0
@@ -264,21 +599,20 @@ class LiveHFTTrader:
         dumping = (momentum_bps < -10.0) or (ofi < -1200.0)
         pumping = (momentum_bps > +10.0) or (ofi > +1200.0)
 
-        # 3. Emergency Taker Stop-Loss:
-        # If inventory drawdown exceeds 30 bps from entry price, execute immediate taker liquidation
-        inv_usd = self.inventory * mid
-        abs_inv = abs(inv_usd)
-        if self.entry_price > 0 and abs_inv > 30.0:
+        # Dynamic Emergency Taker Stop-Loss:
+        # Scale with order size (check on positions >= $7.00)
+        stop_loss_trigger_usd = max(self.order_size_usd * 0.7, 5.0)
+        if self.entry_price > 0 and abs_inv_usd >= stop_loss_trigger_usd:
             price_delta_bps = (mid - self.entry_price) / self.entry_price * 10000.0
             unrealized_loss_bps = -price_delta_bps if self.inventory > 0 else price_delta_bps
             if unrealized_loss_bps > 25.0:  # 25 bps stop-loss
-                # Emergency close via taker order
                 exit_px = new_book.best_bid if self.inventory > 0 else new_book.best_ask
-                notional = abs_inv
+                notional = abs_inv_usd
                 fee = notional * self.taker_fee_rate
                 self.cash += (self.inventory * exit_px) - fee
                 self.total_fees += fee
                 self.fills_count += 1
+                self.pair_fills_count += 1
                 asyncio.create_task(db.log_fill(
                     session_id=self.session_id,
                     coin=self.coin,
@@ -308,7 +642,7 @@ class LiveHFTTrader:
                 self.last_circuit_break_time = now + 10.0 # Freeze for 10s
                 return
 
-        # Check circuit breaker timeout
+        # Check circuit breaker cooldown
         if now < self.last_circuit_break_time:
             self.circuit_breaker_active = True
             self.circuit_breaker_reason = "Cooling down after stop-loss"
@@ -316,20 +650,20 @@ class LiveHFTTrader:
             self.active_ask = float('inf')
             return
 
-        # 4. Unilateral Inventory Offloading:
-        # If holding long inventory ($ > 30), shut off buying completely!
-        # If holding short inventory ($ < -30), shut off selling completely!
+        # Dynamic Unilateral Inventory Offloading:
+        # Scale with order size (e.g. 1.5x order size = $15)
+        offload_threshold_usd = max(self.order_size_usd * 1.5, 12.0)
         can_bid = True
         can_ask = True
 
-        if inv_usd > 30.0:
-            can_bid = False  # DO NOT BUY
+        if inv_usd >= offload_threshold_usd:
+            can_bid = False  # DO NOT BUY MORE
             can_ask = True   # AGGRESSIVELY SELL
-        elif inv_usd < -30.0:
-            can_ask = False  # DO NOT SELL
+        elif inv_usd <= -offload_threshold_usd:
+            can_ask = False  # DO NOT SELL MORE
             can_bid = True   # AGGRESSIVELY BUY
 
-        if abs_inv >= self.max_inventory_usd:
+        if abs_inv_usd >= self.max_inventory_usd:
             can_bid = (self.inventory < 0)
             can_ask = (self.inventory > 0)
 
@@ -352,7 +686,9 @@ class LiveHFTTrader:
             self.active_ask = self.pending_ask
             self.pending_quote_time = 0.0
 
-        # Generate quotes with AS+OFI model
+        # =========================================================================
+        # 4. QUOTE GENERATION & DYNAMIC SIZING
+        # =========================================================================
         target_bid, target_ask = self.model.generate_quotes(
             book=new_book,
             inventory=self.inventory,
@@ -362,24 +698,58 @@ class LiveHFTTrader:
             use_ofi=True
         )
 
-        # If holding inventory, quote the exit side aggressively at the top of book to dump fast
-        if inv_usd > 30.0 and new_book.best_ask > 0:
-            target_ask = min(target_ask, new_book.best_ask)
-        elif inv_usd < -30.0 and new_book.best_bid > 0:
-            target_bid = max(target_bid, new_book.best_bid)
+        # Calculate top-of-book depth imbalance in [-1, +1]
+        top_bid_sz = new_book.best_bid_size * new_book.best_bid
+        top_ask_sz = new_book.best_ask_size * new_book.best_ask
+        total_depth = top_bid_sz + top_ask_sz
+        book_imbalance = (top_bid_sz - top_ask_sz) / total_depth if total_depth > 0 else 0.0
 
-        quote_qty = round(self.order_size_usd / mid, 4)
-        self.our_quote_size = quote_qty
+        current_pair_pnl = (self.cash + inv_usd) - self.pair_start_equity
+
+        # Dynamic Quote Sizing based on Order Book Pressure & Profit Momentum
+        if self.dynamic_sizing:
+            bid_qty, ask_qty, bid_usd, ask_usd = self.model.compute_dynamic_sizes(
+                mid_price=mid,
+                max_order_size_usd=self.order_size_usd,
+                min_order_size_usd=self.min_order_size_usd,
+                inventory_usd=inv_usd,
+                max_inventory_usd=self.max_inventory_usd,
+                ofi=ofi,
+                book_imbalance=book_imbalance,
+                pair_pnl=current_pair_pnl
+            )
+            self.our_bid_size = bid_qty
+            self.our_ask_size = ask_qty
+            self.our_bid_usd = bid_usd
+            self.our_ask_usd = ask_usd
+            self.our_quote_size = round((bid_qty + ask_qty) / 2.0, 4)
+        else:
+            static_qty = round(self.order_size_usd / mid, 4)
+            self.our_bid_size = static_qty
+            self.our_ask_size = static_qty
+            self.our_bid_usd = self.order_size_usd
+            self.our_ask_usd = self.order_size_usd
+            self.our_quote_size = static_qty
+
+        # If holding inventory, quote the exit side aggressively at the top of book to dump fast
+        if inv_usd >= offload_threshold_usd and new_book.best_ask > 0:
+            target_ask = min(target_ask, new_book.best_ask)
+            self.our_ask_size = round(abs(self.inventory), 4)
+            self.our_ask_usd = round(abs_inv_usd, 2)
+        elif inv_usd <= -offload_threshold_usd and new_book.best_bid > 0:
+            target_bid = max(target_bid, new_book.best_bid)
+            self.our_bid_size = round(abs(self.inventory), 4)
+            self.our_bid_usd = round(abs_inv_usd, 2)
 
         # Stage new quote with simulated latency
-        self.pending_bid = target_bid if can_bid else 0.0
-        self.pending_ask = target_ask if can_ask else float('inf')
+        self.pending_bid = target_bid if (can_bid and self.our_bid_size > 0) else 0.0
+        self.pending_ask = target_ask if (can_ask and self.our_ask_size > 0) else float('inf')
         self.pending_quote_time = now + (self.latency_ms / 1000.0)
 
         # Record equity progression (sample once every ~500ms)
         if now - self.last_update_time >= 0.5:
             self.last_update_time = now
-            equity = self.cash + (self.inventory * mid)
+            equity = self.cash + inv_usd
             self.equity_history.append({
                 "time": now,
                 "equity": round(equity, 3),
@@ -409,6 +779,9 @@ class LiveHFTTrader:
         if not self.active_bid or not self.active_ask or self.active_bid <= 0:
             return
 
+        if trade_list and trade_list[0].get("coin") and trade_list[0].get("coin") != self.coin:
+            return
+
         now = time.time()
         for t in trade_list:
             px = float(t["px"])
@@ -417,7 +790,8 @@ class LiveHFTTrader:
 
             # Real market taker BUY: hits our passive ASK quote
             if side == "B" and px >= self.active_ask:
-                fill_sz = min(self.our_quote_size, sz)
+                ask_limit_sz = self.our_ask_size if self.our_ask_size > 0 else self.our_quote_size
+                fill_sz = min(ask_limit_sz, sz)
                 fill_px = self.active_ask
                 notional = fill_sz * fill_px
                 fee = notional * self.maker_fee_rate
@@ -438,6 +812,7 @@ class LiveHFTTrader:
 
                 self.total_fees += fee
                 self.fills_count += 1
+                self.pair_fills_count += 1
 
                 asyncio.create_task(db.log_fill(
                     session_id=self.session_id,
@@ -469,9 +844,14 @@ class LiveHFTTrader:
                 # Invalidate quote until next book update
                 self.active_ask = float('inf')
 
+                # If flattening and reached 0 inventory, trigger immediate switch
+                if self.pair_status == "FLATTENING" and abs(self.inventory) < 1e-4:
+                    asyncio.create_task(self._execute_coin_switch())
+
             # Real market taker SELL: hits our passive BID quote
             elif side == "A" and px <= self.active_bid:
-                fill_sz = min(self.our_quote_size, sz)
+                bid_limit_sz = self.our_bid_size if self.our_bid_size > 0 else self.our_quote_size
+                fill_sz = min(bid_limit_sz, sz)
                 fill_px = self.active_bid
                 notional = fill_sz * fill_px
                 fee = notional * self.maker_fee_rate
@@ -492,6 +872,7 @@ class LiveHFTTrader:
 
                 self.total_fees += fee
                 self.fills_count += 1
+                self.pair_fills_count += 1
 
                 asyncio.create_task(db.log_fill(
                     session_id=self.session_id,
@@ -523,12 +904,21 @@ class LiveHFTTrader:
                 # Invalidate quote until next book update
                 self.active_bid = 0.0
 
+                # If flattening and reached 0 inventory, trigger immediate switch
+                if self.pair_status == "FLATTENING" and abs(self.inventory) < 1e-4:
+                    asyncio.create_task(self._execute_coin_switch())
+
     def get_telemetry(self) -> Dict[str, Any]:
         """Serializes current state for WebSockets & UI."""
         mid = self.mid_price if self.mid_price > 0 else 1.0
         equity = self.cash + (self.inventory * mid)
         net_pnl = equity - self.initial_capital
-        return_pct = (net_pnl / self.initial_capital) * 100.0
+        return_pct = (net_pnl / max(self.initial_capital, 1.0)) * 100.0
+
+        pair_duration = time.time() - self.pair_start_time
+        pair_pnl = equity - self.pair_start_equity
+        pair_return_pct = (pair_pnl / max(self.pair_start_equity, 1.0)) * 100.0
+        countdown = max(0, int(self.rotation_interval_sec - pair_duration))
 
         return {
             "status": self.status,
@@ -557,14 +947,42 @@ class LiveHFTTrader:
             "book_depth": self.book_depth,
             "recent_fills": self.recent_fills[:15],
             "equity_history": self.equity_history[-50:],
+
+            # Dynamic 15-Min Pair Rotation Telemetry
+            "auto_rotate": self.auto_rotate,
+            "pair_status": self.pair_status,
+            "pair_duration_sec": round(pair_duration, 1),
+            "pair_duration_min": round(pair_duration / 60.0, 1),
+            "pair_pnl": round(pair_pnl, 2),
+            "pair_return_pct": round(pair_return_pct, 2),
+            "pair_fills_count": self.pair_fills_count,
+            "rotation_countdown_sec": countdown,
+            "rotation_countdown_str": f"{countdown // 60:02d}:{countdown % 60:02d}",
+            "rotation_reason": self.rotation_reason,
+            "rotation_history": self.rotation_history[:10],
+
+            # Dynamic Sizing Telemetry
+            "dynamic_sizing": self.dynamic_sizing,
+            "our_bid_usd": self.our_bid_usd,
+            "our_ask_usd": self.our_ask_usd,
+            "our_bid_size": self.our_bid_size,
+            "our_ask_size": self.our_ask_size,
+            "min_order_size_usd": self.min_order_size_usd,
+
             "config": {
                 "coin": self.coin,
+                "initial_capital": self.initial_capital,
                 "order_size_usd": self.order_size_usd,
+                "min_order_size_usd": self.min_order_size_usd,
+                "dynamic_sizing": self.dynamic_sizing,
                 "gamma": self.gamma,
                 "beta_ofi": self.beta_ofi,
                 "min_spread_bps": self.min_spread_bps,
                 "min_market_spread_bps": self.min_market_spread_bps,
                 "max_inventory_usd": self.max_inventory_usd,
+                "auto_rotate": self.auto_rotate,
+                "rotation_interval_min": round(self.rotation_interval_sec / 60.0, 1),
+                "trades_target_per_pair": self.trades_target_per_pair,
                 "maker_fee_bps": round(self.maker_fee_rate * 10000, 1),
                 "taker_fee_bps": round(self.taker_fee_rate * 10000, 1)
             }

@@ -94,8 +94,22 @@ class DatabaseManager:
             circuit_breaker_reason TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS pair_rotations (
+            id SERIAL PRIMARY KEY,
+            session_id INT REFERENCES trading_sessions(id) ON DELETE CASCADE,
+            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            from_coin VARCHAR(20) NOT NULL,
+            to_coin VARCHAR(20) NOT NULL,
+            duration_sec NUMERIC(10, 2) NOT NULL,
+            pair_pnl NUMERIC(14, 4) NOT NULL,
+            pair_return_pct NUMERIC(10, 4) NOT NULL,
+            fills_count INT DEFAULT 0,
+            reason VARCHAR(100)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_fills_session ON execution_fills(session_id);
         CREATE INDEX IF NOT EXISTS idx_telemetry_session ON market_telemetry(session_id);
+        CREATE INDEX IF NOT EXISTS idx_rotations_session ON pair_rotations(session_id);
         """
         async with self.pool.acquire() as conn:
             await conn.execute(schema_sql)
@@ -247,6 +261,63 @@ class DatabaseManager:
                 return [dict(r) for r in rows]
         except Exception as e:
             logger.error(f"Failed to fetch fills: {e}")
+    async def log_rotation(
+        self,
+        session_id: Optional[int],
+        from_coin: str,
+        to_coin: str,
+        duration_sec: float,
+        pair_pnl: float,
+        pair_return_pct: float,
+        fills_count: int,
+        reason: str
+    ):
+        """Logs a coin rotation event."""
+        if not self._is_connected or not self.pool or not session_id:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO pair_rotations (
+                        session_id, from_coin, to_coin, duration_sec, pair_pnl, pair_return_pct, fills_count, reason
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """,
+                    session_id, from_coin, to_coin, duration_sec, pair_pnl, pair_return_pct, fills_count, reason
+                )
+        except Exception as e:
+            logger.error(f"Failed to log rotation in DB: {e}")
+
+    async def get_rotations(self, session_id: Optional[int] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieves past coin rotation events."""
+        if not self._is_connected or not self.pool:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                if session_id:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, session_id, timestamp, from_coin, to_coin, duration_sec, pair_pnl, pair_return_pct, fills_count, reason
+                        FROM pair_rotations
+                        WHERE session_id = $1
+                        ORDER BY id DESC
+                        LIMIT $2
+                        """,
+                        session_id, limit
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, session_id, timestamp, from_coin, to_coin, duration_sec, pair_pnl, pair_return_pct, fills_count, reason
+                        FROM pair_rotations
+                        ORDER BY id DESC
+                        LIMIT $1
+                        """,
+                        limit
+                    )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"Failed to fetch rotations: {e}")
             return []
 
     async def export_session_csv(self, session_id: int) -> str:

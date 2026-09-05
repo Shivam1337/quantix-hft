@@ -8,6 +8,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // DOM Elements
     const equityVal = document.getElementById("equity-val");
     const pnlVal = document.getElementById("pnl-val");
+    const rotationCountdownVal = document.getElementById("rotation-countdown-val");
+    const pairPnlVal = document.getElementById("pair-pnl-val");
+    const pairStatusBadge = document.getElementById("pair-status-badge");
     const inventoryVal = document.getElementById("inventory-val");
     const fillsVal = document.getElementById("fills-val");
     const feesVal = document.getElementById("fees-val");
@@ -31,18 +34,25 @@ document.addEventListener("DOMContentLoaded", () => {
     const ourBidCallout = document.getElementById("our-bid-callout");
     const ourAskPrice = document.getElementById("our-ask-price");
     const ourBidPrice = document.getElementById("our-bid-price");
+    const ourAskNotional = document.getElementById("our-ask-notional");
+    const ourBidNotional = document.getElementById("our-bid-notional");
+    const dynamicSizingToggle = document.getElementById("dynamic-sizing-toggle");
 
     const fillsTbody = document.getElementById("fills-tbody");
     const fillsCountBadge = document.getElementById("fills-count-badge");
+    const rotationsTbody = document.getElementById("rotations-tbody");
+    const rotationsCountBadge = document.getElementById("rotations-count-badge");
 
     const btnStart = document.getElementById("btn-start");
     const btnStop = document.getElementById("btn-stop");
     const btnReset = document.getElementById("btn-reset");
     const btnScan = document.getElementById("btn-scan");
+    const btnRotate = document.getElementById("btn-rotate");
     const btnTheme = document.getElementById("btn-theme");
     const btnExport = document.getElementById("btn-export");
 
     const coinSelect = document.getElementById("coin-select");
+    const autoRotateToggle = document.getElementById("auto-rotate-toggle");
     const orderSizeInput = document.getElementById("order-size-input");
     const gammaInput = document.getElementById("gamma-input");
     const gammaVal = document.getElementById("gamma-val");
@@ -183,6 +193,31 @@ document.addEventListener("DOMContentLoaded", () => {
         pnlVal.textContent = `${sign}$${pnl.toFixed(2)} (${sign}${pnlPct.toFixed(2)}%)`;
         pnlVal.className = "tile-value " + (pnl > 0 ? "pnl-positive" : (pnl < 0 ? "pnl-negative" : "pnl-neutral"));
 
+        // Rotation Countdown & Pair Telemetry
+        if (rotationCountdownVal && data.rotation_countdown_str) {
+            rotationCountdownVal.textContent = data.rotation_countdown_str;
+        }
+
+        if (pairPnlVal) {
+            const pPnl = data.pair_pnl || 0.0;
+            const pSign = pPnl >= 0 ? "+" : "";
+            pairPnlVal.textContent = `${pSign}$${pPnl.toFixed(2)}`;
+            pairPnlVal.className = "tile-value " + (pPnl > 0 ? "pnl-positive" : (pPnl < 0 ? "pnl-negative" : "pnl-neutral"));
+        }
+
+        if (pairStatusBadge) {
+            if (data.pair_status === "FLATTENING") {
+                pairStatusBadge.textContent = "OFFLOADING INVENTORY...";
+                pairStatusBadge.style.background = "#d97706";
+            } else if (data.pair_status === "SWITCHING") {
+                pairStatusBadge.textContent = "ROTATING TO BEST PAIR...";
+                pairStatusBadge.style.background = "#7c3aed";
+            } else {
+                pairStatusBadge.textContent = `PAIR: ${data.coin || "ACTIVE"}`;
+                pairStatusBadge.style.background = "#0284c7";
+            }
+        }
+
         inventoryVal.textContent = `${data.inventory.toFixed(2)} (${sign}$${data.inventory_usd.toFixed(2)})`;
         fillsVal.textContent = data.fills_count;
         feesVal.textContent = `$${data.total_fees.toFixed(4)}`;
@@ -215,6 +250,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.active_ask) {
             ourAskCallout.style.display = "flex";
             ourAskPrice.textContent = `$${data.active_ask.toFixed(4)}`;
+            if (ourAskNotional && data.our_ask_usd) {
+                ourAskNotional.textContent = `$${data.our_ask_usd.toFixed(2)} Notional`;
+            }
         } else {
             ourAskCallout.style.display = "none";
         }
@@ -222,6 +260,9 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.active_bid) {
             ourBidCallout.style.display = "flex";
             ourBidPrice.textContent = `$${data.active_bid.toFixed(4)}`;
+            if (ourBidNotional && data.our_bid_usd) {
+                ourBidNotional.textContent = `$${data.our_bid_usd.toFixed(2)} Notional`;
+            }
         } else {
             ourBidCallout.style.display = "none";
         }
@@ -275,7 +316,7 @@ document.addEventListener("DOMContentLoaded", () => {
             fillsTbody.innerHTML = data.recent_fills.map(f => `
                 <tr>
                     <td>${f.time}</td>
-                    <td><span class="${f.side === 'BUY' ? 'badge-buy' : 'badge-sell'}">${f.side}</span></td>
+                    <td><span class="${f.side.includes('BUY') ? 'badge-buy' : 'badge-sell'}">${f.side}</span></td>
                     <td>$${f.price.toFixed(4)}</td>
                     <td>${f.size.toFixed(2)}</td>
                     <td>$${f.notional.toFixed(2)}</td>
@@ -283,18 +324,40 @@ document.addEventListener("DOMContentLoaded", () => {
                 </tr>
             `).join("");
         }
+
+        // Render Rotations Table
+        if (rotationsTbody && data.rotation_history) {
+            rotationsCountBadge.textContent = `${data.rotation_history.length} Rotations`;
+            if (data.rotation_history.length > 0) {
+                rotationsTbody.innerHTML = data.rotation_history.map(r => `
+                    <tr>
+                        <td>${r.time}</td>
+                        <td><strong>${r.from_coin}</strong></td>
+                        <td><span class="badge-buy" style="background: rgba(2, 132, 199, 0.15); color: #0284c7;">${r.to_coin}</span></td>
+                        <td>${r.duration_min}m</td>
+                        <td class="${r.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${r.pnl >= 0 ? '+' : ''}$${r.pnl.toFixed(2)} (${r.return_pct >= 0 ? '+' : ''}${r.return_pct.toFixed(1)}%)</td>
+                        <td>${r.fills}</td>
+                        <td style="font-size: 11px; color: var(--text-muted);">${r.reason || '--'}</td>
+                    </tr>
+                `).join("");
+            }
+        }
     }
 
     // Action Handlers
     btnStart.addEventListener("click", async () => {
         const payload = {
             coin: coinSelect.value,
+            initial_capital: 50.0,
             order_size_usd: parseFloat(orderSizeInput.value),
+            dynamic_sizing: dynamicSizingToggle ? dynamicSizingToggle.checked : true,
             gamma: parseFloat(gammaInput.value),
             beta_ofi: parseFloat(betaInput.value),
             min_spread_bps: parseFloat(spreadInput.value),
             min_market_spread_bps: marketSpreadInput ? parseFloat(marketSpreadInput.value) : 4.5,
             max_inventory_usd: parseFloat(maxInvInput.value),
+            auto_rotate: autoRotateToggle ? autoRotateToggle.checked : true,
+            rotation_interval_min: 15.0,
             mode: "SIMULATED"
         };
 
@@ -323,10 +386,29 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     btnReset.addEventListener("click", async () => {
-        if (confirm("Reset account balance to $1,000.00 and clear history?")) {
+        if (confirm("Reset account balance to $50.00 and clear history?")) {
             await fetch("/api/reset", { method: "POST" });
         }
     });
+
+    if (btnRotate) {
+        btnRotate.addEventListener("click", async () => {
+            btnRotate.textContent = "Offloading...";
+            btnRotate.disabled = true;
+            try {
+                const res = await fetch("/api/rotate", { method: "POST" });
+                const d = await res.json();
+                console.log("Rotate response:", d);
+            } catch (err) {
+                alert("Error initiating rotation: " + err.message);
+            } finally {
+                setTimeout(() => {
+                    btnRotate.textContent = "🔄 Rotate Pair";
+                    btnRotate.disabled = false;
+                }, 2000);
+            }
+        });
+    }
 
     btnScan.addEventListener("click", async () => {
         btnScan.textContent = "Scanning...";

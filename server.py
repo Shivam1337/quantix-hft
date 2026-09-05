@@ -25,14 +25,20 @@ active_websockets: List[WebSocket] = []
 
 class ConfigRequest(BaseModel):
     coin: str = "PONS"
-    order_size_usd: float = 50.0
+    initial_capital: float = 50.0
+    order_size_usd: float = 10.0
     gamma: float = 0.6
     beta_ofi: float = 0.7
     min_spread_bps: float = 2.0
     min_market_spread_bps: float = 4.5
-    max_inventory_usd: float = 200.0
+    max_inventory_usd: float = 25.0
     maker_fee_rate: float = 0.00015
     taker_fee_rate: float = 0.00045
+    auto_rotate: bool = True
+    rotation_interval_min: float = 15.0
+    trades_target_per_pair: int = 12
+    dynamic_sizing: bool = True
+    min_order_size_usd: float = 3.0
     mode: str = "SIMULATED"
 
 
@@ -107,52 +113,71 @@ async def stop_trader():
 @app.post("/api/reset")
 async def reset_trader():
     trader.reset_account()
-    return {"status": "success", "message": "Account reset to initial capital"}
+    return {"status": "success", "message": "Account reset to initial capital ($50.00)"}
+
+
+@app.post("/api/rotate")
+async def force_rotate():
+    """Manually triggers immediate inventory offload and pair rotation."""
+    await trader.force_rotate("Manual user trigger")
+    return {"status": "success", "message": f"Offload and rotation initiated for {trader.coin}"}
 
 
 @app.get("/api/screener")
 async def run_screener():
     """Returns top capacity-constrained coins with high volume and wide spreads."""
     try:
-        r = requests.post("https://api.hyperliquid.xyz/info", json={"type": "metaAndAssetCtxs"}, timeout=5).json()
-        universe = r[0]["universe"]
-        ctxs = r[1]
+        def _scan():
+            r = requests.post("https://api.hyperliquid.xyz/info", json={"type": "metaAndAssetCtxs"}, timeout=5).json()
+            universe = r[0]["universe"]
+            ctxs = r[1]
 
-        candidates = []
-        for u, c in zip(universe, ctxs):
-            name = u["name"]
-            vol = float(c.get("dayNtlVlm", 0))
-            mark = float(c.get("markPx", 0))
-            if vol > 1000000 and mark > 0:
-                candidates.append({"name": name, "vol": vol, "mark": mark})
+            candidates = []
+            for u, c in zip(universe, ctxs):
+                name = u["name"]
+                vol = float(c.get("dayNtlVlm", 0))
+                mark = float(c.get("markPx", 0))
+                if vol > 300000 and mark > 0:
+                    candidates.append({"name": name, "vol": vol, "mark": mark})
 
-        candidates.sort(key=lambda x: x["vol"], reverse=True)
+            candidates.sort(key=lambda x: x["vol"], reverse=True)
+            sample = candidates[:15] + candidates[-25:]
 
-        results = []
-        for c in candidates[:25]:
-            try:
-                book = requests.post("https://api.hyperliquid.xyz/info", json={"type": "l2Book", "coin": c["name"]}, timeout=2).json()
-                bids = book["levels"][0]
-                asks = book["levels"][1]
-                if bids and asks:
-                    bb = float(bids[0]["px"])
-                    ba = float(asks[0]["px"])
-                    spread_bps = (ba - bb) / bb * 10000
-                    top_depth = float(bids[0]["sz"]) * bb
-                    results.append({
-                        "name": c["name"],
-                        "vol_24h": round(c["vol"], 0),
-                        "price": round(c["mark"], 4),
-                        "spread_bps": round(spread_bps, 2),
-                        "top_depth_usd": round(top_depth, 0)
-                    })
-            except Exception:
-                pass
+            results = []
+            for c in sample:
+                try:
+                    book = requests.post("https://api.hyperliquid.xyz/info", json={"type": "l2Book", "coin": c["name"]}, timeout=2).json()
+                    bids = book.get("levels", [[], []])[0]
+                    asks = book.get("levels", [[], []])[1]
+                    if bids and asks:
+                        bb = float(bids[0]["px"])
+                        ba = float(asks[0]["px"])
+                        spread_bps = (ba - bb) / bb * 10000.0
+                        top_depth = float(bids[0]["sz"]) * bb
+                        results.append({
+                            "name": c["name"],
+                            "vol_24h": round(c["vol"], 0),
+                            "price": round(c["mark"], 4),
+                            "spread_bps": round(spread_bps, 2),
+                            "top_depth_usd": round(top_depth, 0)
+                        })
+                except Exception:
+                    pass
 
-        results.sort(key=lambda x: x["spread_bps"], reverse=True)
+            results.sort(key=lambda x: x["spread_bps"], reverse=True)
+            return results
+
+        results = await asyncio.to_thread(_scan)
         return {"candidates": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/history/rotations")
+async def get_rotations(limit: int = 20):
+    """Returns coin rotation history."""
+    rotations = await db.get_rotations(session_id=trader.session_id, limit=limit)
+    return {"rotations": rotations}
 
 
 @app.get("/api/history/sessions")

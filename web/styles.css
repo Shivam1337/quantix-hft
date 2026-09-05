@@ -258,6 +258,42 @@ body {
     overflow: hidden;
 }
 
+.config-card {
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+}
+
+.config-card::-webkit-scrollbar {
+    width: 6px;
+}
+
+.config-card::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.config-card::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.config-card::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+.config-card .card-header {
+    position: sticky;
+    top: -14px;
+    background-color: var(--bg-secondary);
+    z-index: 10;
+    margin-top: -14px;
+    padding-top: 14px;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
 .card-header {
     display: flex;
     align-items: center;
@@ -276,7 +312,7 @@ body {
 
 /* FORMS & CONTROLS */
 .form-group {
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .form-group label {
@@ -355,8 +391,10 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin-top: auto;
-    padding-top: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    padding-bottom: 6px;
+    border-top: 1px solid var(--border-color);
 }
 
 .btn {
@@ -740,4 +778,25 @@ body.dark-theme .fills-table td {
     text-align: center;
     color: var(--text-muted);
     padding: 20px;
+}
+
+/* RESPONSIVE LAYOUT */
+@media (max-width: 1200px) {
+    .grid-container {
+        grid-template-columns: 310px 380px 1fr;
+    }
+}
+
+@media (max-width: 992px) {
+    .terminal-container {
+        height: auto;
+        min-height: 100vh;
+        overflow-y: auto;
+    }
+    .grid-container {
+        grid-template-columns: 1fr;
+    }
+    .card {
+        max-height: none;
+    }
 }

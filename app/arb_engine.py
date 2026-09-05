@@ -93,7 +93,8 @@ class ArbitrageEngine:
                 "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(pricing["timestamp"]))
             }
 
-            # Store in recent cache
+            # Store in recent cache (deduplicated by event_id)
+            self.recent_opportunities = [op for op in self.recent_opportunities if op["event_id"] != event_id]
             self.recent_opportunities.insert(0, opp_data)
             self.recent_opportunities = self.recent_opportunities[:25]
 

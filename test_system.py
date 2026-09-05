@@ -75,7 +75,10 @@ async def test_all():
     sample_token = sample_ev["markets"][0]["token_id"]
     book = await live_feed.fetch_real_order_book(sample_token)
     assert book is not None, f"Failed to fetch real order book for token {sample_token}"
-    print(f"   [PASS] Fetched real order book: Bid=${book['bid']:.3f}, Ask=${book['ask']:.3f}, Mid=${book['mid']:.3f}")
+    bid_str = f"${book['bid']:.3f}" if book['bid'] is not None else "None"
+    ask_str = f"${book['ask']:.3f}" if book['ask'] is not None else "None"
+    mid_str = f"${book['mid']:.3f}" if book['mid'] is not None else "None"
+    print(f"   [PASS] Fetched real order book: Bid={bid_str}, Ask={ask_str}, Mid={mid_str}")
 
     # 5. Test Simulated Execution with $50 Bankroll
     print("\n5. Testing Virtual Portfolio & Simulated Execution ($50 Limit)...")

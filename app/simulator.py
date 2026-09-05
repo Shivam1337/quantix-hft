@@ -128,6 +128,10 @@ class PortfolioSimulator:
         if not self.is_active:
             return False
 
+        # Guard: Check if we already have an OPEN position on this event
+        if any(p["event_id"] == event_id for p in self.open_positions.values()):
+            return False
+
         # Max allocation per trade: 50% of initial capital ($25)
         max_alloc = self.initial_capital * settings.MAX_POSITION_PCT
         available_cash = min(self.cash, max_alloc)
@@ -216,21 +220,29 @@ class PortfolioSimulator:
         """
         Dynamic Rebalancing: Checks open positions and exits when the basket
         normalizes toward $1.00 (or if trailing stop triggers).
+        Requires genuine bid liquidity and a minimum holding period to avoid immediate tick flips.
         """
+        now = time.time()
         closed_ids = []
         for pos_id, pos in list(self.open_positions.items()):
+            # Enforce minimum holding period (at least 30 seconds) to prevent same-tick flip
+            if now - pos.get("opened_at", now) < 30.0:
+                continue
+
             event_id = pos["event_id"]
             current_pricing = live_feed.get_event_basket_pricing(event_id)
             if not current_pricing:
                 continue
 
-            current_basket_price = current_pricing["basket_bid_sum"]
-            entry_price = pos["entry_basket"]
+            current_basket_bid = current_pricing["basket_bid_sum"]
+            entry_cost = pos["entry_basket"]
 
-            # Exit condition: Basket has rebalanced to >= 0.995 (or profit >= 2.5%)
-            if current_basket_price >= 0.995 or (current_basket_price - entry_price) >= 0.025:
+            # Exit condition:
+            # 1. current_basket_bid cannot exceed 1.00 (settlement cap)
+            # 2. current_basket_bid must be higher than entry_cost by at least 1.5% to overcome taker exit fees
+            if current_basket_bid <= 1.00 and (current_basket_bid - entry_cost) >= 0.015:
                 shares = pos["shares"]
-                gross_revenue = round(shares * current_basket_price, 4)
+                gross_revenue = round(shares * current_basket_bid, 4)
 
                 # Real exit fees
                 fee_info = real_fees.calculate_effective_execution_cost(
@@ -242,28 +254,29 @@ class PortfolioSimulator:
                 net_revenue = round(gross_revenue - fee_info["total_friction_usd"], 4)
                 realized_pnl = round(net_revenue - (pos["notional"] + pos["entry_friction"]), 4)
 
-                # Credit cash and free locked capital
-                self.cash += net_revenue
-                self.locked_capital -= pos["notional"]
-                self.total_pnl += realized_pnl
-                closed_ids.append(pos_id)
+                # Only close if net PnL is positive
+                if realized_pnl > 0:
+                    self.cash += net_revenue
+                    self.locked_capital -= pos["notional"]
+                    self.total_pnl += realized_pnl
+                    closed_ids.append(pos_id)
 
-                # Update position in PostgreSQL
-                await db.execute(
-                    """
-                    UPDATE simulated_positions 
-                    SET exit_basket = $1, realized_pnl = $2, status = 'CLOSED', closed_at = CURRENT_TIMESTAMP
-                    WHERE id = $3
-                    """,
-                    current_basket_price,
-                    realized_pnl,
-                    pos_id
-                )
+                    # Update position in PostgreSQL
+                    await db.execute(
+                        """
+                        UPDATE simulated_positions 
+                        SET exit_basket = $1, realized_pnl = $2, status = 'CLOSED', closed_at = CURRENT_TIMESTAMP
+                        WHERE id = $3
+                        """,
+                        current_basket_bid,
+                        realized_pnl,
+                        pos_id
+                    )
 
-                logger.info(
-                    f"[Position Closed] Rebalanced '{pos['event_title'][:25]}': "
-                    f"Sold @ ${current_basket_price:.3f} | PnL: ${realized_pnl:+.3f}"
-                )
+                    logger.info(
+                        f"[Position Closed] Rebalanced '{pos['event_title'][:25]}': "
+                        f"Sold @ ${current_basket_bid:.3f} | PnL: ${realized_pnl:+.3f}"
+                    )
 
         for pid in closed_ids:
             self.open_positions.pop(pid, None)
@@ -272,14 +285,18 @@ class PortfolioSimulator:
             await self.record_history_snapshot()
 
     async def reset_simulation(self):
-        """Resets the virtual portfolio back to $50."""
+        """Resets the virtual portfolio back to $50 and wipes old simulated records."""
         self.cash = self.initial_capital
         self.locked_capital = 0.0
         self.total_pnl = 0.0
         self.open_positions.clear()
-        await db.execute("UPDATE simulated_positions SET status = 'CANCELLED', closed_at = CURRENT_TIMESTAMP WHERE status = 'OPEN'")
+        self.trade_counter = 0
+        self.position_counter = 0
+        await db.execute("DELETE FROM simulated_trades")
+        await db.execute("DELETE FROM simulated_positions")
+        await db.execute("DELETE FROM portfolio_history")
         await self.record_history_snapshot()
-        logger.info("Simulator reset to initial $50.00 balance.")
+        logger.info("Simulator reset to initial $50.00 balance with clean ledger.")
 
 
 simulator = PortfolioSimulator(initial_capital=settings.INITIAL_CAPITAL)

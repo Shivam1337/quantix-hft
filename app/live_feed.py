@@ -7,6 +7,7 @@ Real-time market data ingestion connecting directly to Polymarket:
 """
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 import time
@@ -68,11 +69,11 @@ class LiveMarketFeed:
             # Concurrently query dedicated crypto events and top general volume events
             crypto_task = self.session.get(
                 f"{settings.GAMMA_API_BASE}/events",
-                params={"active": "true", "closed": "false", "tag_slug": "crypto", "order": "volume24hr", "ascending": "false", "limit": "50"}
+                params={"active": "true", "closed": "false", "tag_slug": "crypto", "order": "volume24hr", "ascending": "false", "limit": "100"}
             )
             general_task = self.session.get(
                 f"{settings.GAMMA_API_BASE}/events",
-                params={"active": "true", "closed": "false", "order": "volume24hr", "ascending": "false", "limit": "60"}
+                params={"active": "true", "closed": "false", "order": "volume24hr", "ascending": "false", "limit": "100"}
             )
             resps = await asyncio.gather(crypto_task, general_task, return_exceptions=True)
 
@@ -99,9 +100,23 @@ class LiveMarketFeed:
                                 e["is_crypto"] = any(k in t_low for k in crypto_keywords)
                                 merged_events[eid] = e
 
-            # Filter candidates for valid combinatorial baskets
+            # Filter candidates for valid active combinatorial baskets
             candidate_events = []
+            now_utc = datetime.now(timezone.utc)
             for event in merged_events.values():
+                if event.get("closed") is True or event.get("active") is False:
+                    continue
+
+                # Filter out expired events
+                end_str = event.get("endDate")
+                if end_str:
+                    try:
+                        end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                        if end_dt <= now_utc:
+                            continue
+                    except Exception:
+                        pass
+
                 markets = event.get("markets", [])
                 if not isinstance(markets, list) or len(markets) == 0:
                     continue
@@ -112,7 +127,7 @@ class LiveMarketFeed:
                     any("win" in m.get("question", "").lower() or "draw" in m.get("question", "").lower() for m in markets)
                 )
 
-                # Check if multi-bracket NegRisk / 3-way match
+                # Multi-bracket NegRisk / 3-way match
                 if (is_neg_risk or is_three_way) and 2 <= len(markets) <= 15:
                     candidate_events.append(event)
                 # Or binary event with YES + NO tokens
@@ -152,16 +167,14 @@ class LiveMarketFeed:
                                 continue
                         if clob_tokens and len(clob_tokens) >= 1:
                             token_id = str(clob_tokens[0])
-                            ask_val = float(m["bestAsk"]) if m.get("bestAsk") is not None else None
-                            bid_val = float(m["bestBid"]) if m.get("bestBid") is not None else None
                             parsed_markets.append({
                                 "market_id": str(m.get("id")),
                                 "question": m.get("question"),
                                 "outcome_name": m.get("groupItemTitle") or m.get("question"),
                                 "condition_id": m.get("conditionId"),
                                 "token_id": token_id,
-                                "initial_ask": ask_val,
-                                "initial_bid": bid_val
+                                "initial_ask": float(m["bestAsk"]) if m.get("bestAsk") is not None else None,
+                                "initial_bid": float(m["bestBid"]) if m.get("bestBid") is not None else None
                             })
                 elif len(markets) == 1:
                     m = markets[0]
@@ -174,29 +187,25 @@ class LiveMarketFeed:
                     if clob_tokens and len(clob_tokens) == 2:
                         yes_token = str(clob_tokens[0])
                         no_token = str(clob_tokens[1])
-                        yes_ask = float(m["bestAsk"]) if m.get("bestAsk") is not None else None
-                        yes_bid = float(m["bestBid"]) if m.get("bestBid") is not None else None
-                        if yes_ask is not None:
-                            no_ask = round(1.0 - (yes_bid if yes_bid is not None else (yes_ask - 0.02)), 4)
-                            no_bid = round(1.0 - yes_ask, 4)
-                            parsed_markets.append({
-                                "market_id": str(m.get("id")),
-                                "question": m.get("question"),
-                                "outcome_name": "YES",
-                                "condition_id": m.get("conditionId"),
-                                "token_id": yes_token,
-                                "initial_ask": yes_ask,
-                                "initial_bid": yes_bid
-                            })
-                            parsed_markets.append({
-                                "market_id": str(m.get("id")),
-                                "question": m.get("question"),
-                                "outcome_name": "NO",
-                                "condition_id": m.get("conditionId"),
-                                "token_id": no_token,
-                                "initial_ask": no_ask,
-                                "initial_bid": no_bid
-                            })
+                        # In binary markets, both YES and NO tokens must be fetched directly from CLOB
+                        parsed_markets.append({
+                            "market_id": str(m.get("id")),
+                            "question": m.get("question"),
+                            "outcome_name": "YES",
+                            "condition_id": m.get("conditionId"),
+                            "token_id": yes_token,
+                            "initial_ask": float(m["bestAsk"]) if m.get("bestAsk") is not None else None,
+                            "initial_bid": float(m["bestBid"]) if m.get("bestBid") is not None else None
+                        })
+                        parsed_markets.append({
+                            "market_id": str(m.get("id")),
+                            "question": m.get("question"),
+                            "outcome_name": "NO",
+                            "condition_id": m.get("conditionId"),
+                            "token_id": no_token,
+                            "initial_ask": None,
+                            "initial_bid": None
+                        })
 
                 if len(parsed_markets) >= 2:
                     self.monitored_events[event_id] = {
@@ -207,20 +216,6 @@ class LiveMarketFeed:
                         "is_crypto": is_crypto,
                         "markets": parsed_markets
                     }
-
-                    # Seed initial order books with real Gamma prices
-                    for pm in parsed_markets:
-                        if pm["initial_ask"] is not None:
-                            init_ask = pm["initial_ask"]
-                            init_bid = pm["initial_bid"] or max(0.001, round(init_ask - 0.01, 3))
-                            self.order_books[pm["token_id"]] = {
-                                "bid": init_bid,
-                                "ask": init_ask,
-                                "mid": round((init_bid + init_ask) / 2.0, 4),
-                                "bid_depth": 100.0,
-                                "ask_depth": 100.0,
-                                "updated_at": time.time()
-                            }
 
                     # Persist to database
                     await db.execute(
@@ -268,14 +263,13 @@ class LiveMarketFeed:
         except Exception as e:
             logger.error(f"Error during event discovery: {e}")
 
-    async def fetch_real_order_book(self, token_id: str, fallback_price: Optional[float] = None) -> Dict[str, float]:
-        """Queries real live order book from Polymarket CLOB API with fallback to latest known market price."""
+    async def fetch_real_order_book(self, token_id: str) -> Optional[Dict[str, Any]]:
+        """Queries real live order book from Polymarket CLOB API. Returns None if invalid or unavailable."""
         if not self.session or self.session.closed:
-            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8))
-
-        existing = self.order_books.get(token_id, {})
-        default_ask = existing.get("ask", fallback_price if fallback_price is not None else 0.50)
-        default_bid = existing.get("bid", max(0.001, round(default_ask - 0.01, 3)))
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=8),
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
 
         url = f"{settings.CLOB_API_BASE}/book"
         params = {"token_id": token_id}
@@ -285,18 +279,25 @@ class LiveMarketFeed:
                     book = await resp.json()
                     bids = book.get("bids", [])
                     asks = book.get("asks", [])
+
                     # Polymarket CLOB order books require:
                     # - Best Bid: HIGHEST bid price (max)
                     # - Best Ask: LOWEST ask price (min)
                     best_bid_entry = max(bids, key=lambda b: float(b["price"])) if bids else None
-                    best_bid = float(best_bid_entry["price"]) if best_bid_entry else default_bid
-                    best_bid_size = float(best_bid_entry.get("size", 100.0)) if best_bid_entry else 100.0
+                    best_bid = float(best_bid_entry["price"]) if best_bid_entry else None
+                    best_bid_size = float(best_bid_entry.get("size", 0.0)) if best_bid_entry else 0.0
 
                     best_ask_entry = min(asks, key=lambda a: float(a["price"])) if asks else None
-                    best_ask = float(best_ask_entry["price"]) if best_ask_entry else default_ask
-                    best_ask_size = float(best_ask_entry.get("size", 100.0)) if best_ask_entry else 100.0
+                    best_ask = float(best_ask_entry["price"]) if best_ask_entry else None
+                    best_ask_size = float(best_ask_entry.get("size", 0.0)) if best_ask_entry else 0.0
 
-                    mid_price = round((best_bid + best_ask) / 2.0, 4)
+                    mid_price = None
+                    if best_bid is not None and best_ask is not None:
+                        mid_price = round((best_bid + best_ask) / 2.0, 4)
+                    elif best_ask is not None:
+                        mid_price = best_ask
+                    elif best_bid is not None:
+                        mid_price = best_bid
 
                     book_data = {
                         "bid": best_bid,
@@ -308,32 +309,21 @@ class LiveMarketFeed:
                     }
                     self.order_books[token_id] = book_data
 
-                    await db.execute(
-                        "UPDATE tokens SET latest_price = $1, updated_at = CURRENT_TIMESTAMP WHERE token_id = $2",
-                        mid_price,
-                        token_id
-                    )
+                    if mid_price is not None:
+                        await db.execute(
+                            "UPDATE tokens SET latest_price = $1, updated_at = CURRENT_TIMESTAMP WHERE token_id = $2",
+                            mid_price,
+                            token_id
+                        )
                     return book_data
                 else:
-                    return existing or {
-                        "bid": default_bid,
-                        "ask": default_ask,
-                        "mid": round((default_bid + default_ask) / 2.0, 4),
-                        "bid_depth": 50.0,
-                        "ask_depth": 50.0,
-                        "updated_at": time.time()
-                    }
+                    self.order_books[token_id] = None
+                    return None
 
         except Exception as e:
             logger.debug(f"Failed to fetch order book for {token_id[:12]}: {e}")
-            return existing or {
-                "bid": default_bid,
-                "ask": default_ask,
-                "mid": round((default_bid + default_ask) / 2.0, 4),
-                "bid_depth": 50.0,
-                "ask_depth": 50.0,
-                "updated_at": time.time()
-            }
+            self.order_books[token_id] = None
+            return None
 
     async def _feed_loop(self):
         """Continuously updates live books for candidate tokens."""
@@ -359,8 +349,8 @@ class LiveMarketFeed:
 
     def get_event_basket_pricing(self, event_id: str) -> Optional[Dict[str, Any]]:
         """
-        Calculates real-time basket pricing across all candidate outcomes for an event:
-        sum(best_ask), sum(best_bid), sum(mid).
+        Calculates real-time basket pricing across all candidate outcomes for an event.
+        Requires genuine, liquid CLOB order books for EVERY outcome.
         """
         ev = self.monitored_events.get(event_id)
         if not ev:
@@ -377,16 +367,28 @@ class LiveMarketFeed:
             if not book:
                 return None  # Incomplete basket pricing
 
-            total_ask_sum += book["ask"]
-            total_bid_sum += book["bid"]
+            # Strictly require a real best ask and liquidity >= 5.0 to buy
+            if book["ask"] is None or book["ask"] <= 0 or book["ask_depth"] < 5.0:
+                return None
+
+            best_ask = book["ask"]
+            best_bid = book["bid"] if (book["bid"] is not None and book["bid_depth"] >= 5.0) else 0.0
+
+            total_ask_sum += best_ask
+            total_bid_sum += best_bid
             outcomes_info.append({
                 "outcome_name": m["outcome_name"],
                 "token_id": t_id,
                 "best_bid": book["bid"],
-                "best_ask": book["ask"],
+                "best_ask": best_ask,
                 "ask_depth": book["ask_depth"],
                 "bid_depth": book["bid_depth"]
             })
+
+        # Sanity check: In a real market, bid sum can never exceed ask sum
+        # If bid sum >= ask sum or exceeds settlement cap (1.05), the books are crossed or anomalous
+        if total_bid_sum >= total_ask_sum or total_bid_sum > 1.05:
+            return None
 
         return {
             "event_id": event_id,

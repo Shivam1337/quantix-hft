@@ -183,6 +183,67 @@ class LiveHFTTrader:
         self.pair_status = "ACTIVE"
         self.rotation_reason = ""
         self.rotation_history.clear()
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.save_state())
+        except RuntimeError:
+            pass
+
+    async def save_state(self):
+        """Persists complete engine state to PostgreSQL for continuous deployment resilience."""
+        try:
+            state = {
+                "id": 1,
+                "status": self.status,
+                "coin": self.coin,
+                "cash": float(self.cash),
+                "inventory": float(self.inventory),
+                "entry_price": float(self.entry_price),
+                "initial_capital": float(self.initial_capital),
+                "total_fees": float(self.total_fees),
+                "fills_count": int(self.fills_count),
+                "session_id": self.session_id,
+                "config": self.get_telemetry().get("config", {}),
+                "pair_start_time": float(self.pair_start_time) if self.pair_start_time else None,
+                "pair_start_equity": float(self.pair_start_equity) if self.pair_start_equity else None,
+                "pair_fills_count": int(self.pair_fills_count),
+                "pair_status": self.pair_status
+            }
+            await db.save_engine_state(state)
+        except Exception:
+            pass
+
+    def restore_state(
+        self,
+        saved_state: Dict[str, Any],
+        recent_fills: Optional[List[Dict[str, Any]]] = None,
+        recent_rotations: Optional[List[Dict[str, Any]]] = None
+    ):
+        """Restores trading engine state after continuous deployment restart."""
+        self.status = saved_state.get("status", "STOPPED")
+        self.coin = saved_state.get("coin", "PONS")
+        self.cash = saved_state.get("cash", 50.0)
+        self.inventory = saved_state.get("inventory", 0.0)
+        self.entry_price = saved_state.get("entry_price", 0.0)
+        self.initial_capital = saved_state.get("initial_capital", 50.0)
+        self.total_fees = saved_state.get("total_fees", 0.0)
+        self.fills_count = saved_state.get("fills_count", 0)
+        self.session_id = saved_state.get("session_id")
+        self.pair_start_time = saved_state.get("pair_start_time", time.time())
+        self.pair_start_equity = saved_state.get("pair_start_equity", self.cash)
+        self.pair_fills_count = saved_state.get("pair_fills_count", 0)
+        self.pair_status = saved_state.get("pair_status", "ACTIVE")
+        
+        saved_config = saved_state.get("config", {})
+        if saved_config:
+            self.configure(saved_config)
+            
+        if recent_fills:
+            self.recent_fills = recent_fills
+        if recent_rotations:
+            self.rotation_history = recent_rotations
+            
+        print(f"[CD Recovery] Restored state for {self.coin}: Status={self.status}, Cash=${self.cash:.2f}, Inv={self.inventory:.4f}, Session={self.session_id}")
 
     async def find_best_pair(self, exclude_coin: Optional[str] = None) -> Optional[str]:
         """Finds the best trading pair on Hyperliquid with high volume and widest spread."""
@@ -348,9 +409,10 @@ class LiveHFTTrader:
             self.circuit_breaker_reason = ""
             self.rotation_reason = ""
             self.pair_status = "ACTIVE"
+            await self.save_state()
 
-    async def start(self, config: Optional[Dict[str, Any]] = None):
-        """Starts the live market maker loop."""
+    async def start(self, config: Optional[Dict[str, Any]] = None, resume: bool = False):
+        """Starts the live market maker loop, with support for seamless continuous deployment resumption."""
         async with self._lock:
             if self.status == "RUNNING":
                 return
@@ -359,17 +421,28 @@ class LiveHFTTrader:
                 self.configure(config)
 
             self.status = "RUNNING"
-            self.pair_start_time = time.time()
-            self.pair_start_equity = self.cash
-            self.pair_fills_count = 0
-            self.pair_status = "ACTIVE"
+            
+            if not resume:
+                self.pair_start_time = time.time()
+                self.pair_start_equity = self.cash
+                self.pair_fills_count = 0
+                self.pair_status = "ACTIVE"
+                # Persist new trading session in DB
+                self.session_id = await db.create_session(
+                    coin=self.coin,
+                    initial_capital=self.initial_capital,
+                    config=self.get_telemetry().get("config", {})
+                )
+            else:
+                if not self.session_id:
+                    self.session_id = await db.create_session(
+                        coin=self.coin,
+                        initial_capital=self.initial_capital,
+                        config=self.get_telemetry().get("config", {})
+                    )
+                print(f"[Continuous Deployment] Resumed active engine for {self.coin} (Cash=${self.cash:.2f}, Inv={self.inventory:.4f})")
 
-            # Persist new trading session in DB
-            self.session_id = await db.create_session(
-                coin=self.coin,
-                initial_capital=self.initial_capital,
-                config=self.get_telemetry().get("config", {})
-            )
+            await self.save_state()
             self._task = asyncio.create_task(self._market_data_loop())
 
     async def stop(self):
@@ -396,6 +469,9 @@ class LiveHFTTrader:
                     net_pnl=final_eq - self.initial_capital,
                     total_fills=self.fills_count
                 )
+                self.session_id = None
+                
+            await self.save_state()
 
     async def _market_data_loop(self):
         """Persistent WebSocket loop connecting to Hyperliquid."""
@@ -523,6 +599,7 @@ class LiveHFTTrader:
                     inventory_after=0.0,
                     cash_after=self.cash
                 ))
+                asyncio.create_task(self.save_state())
                 self.recent_fills.insert(0, {
                     "id": self.fills_count,
                     "time": time.strftime("%H:%M:%S", time.localtime(now)),
@@ -643,6 +720,7 @@ class LiveHFTTrader:
                     inventory_after=0.0,
                     cash_after=self.cash
                 ))
+                asyncio.create_task(self.save_state())
                 self.recent_fills.insert(0, {
                     "id": self.fills_count,
                     "time": time.strftime("%H:%M:%S", time.localtime(now)),
@@ -844,6 +922,7 @@ class LiveHFTTrader:
                     inventory_after=self.inventory,
                     cash_after=self.cash
                 ))
+                asyncio.create_task(self.save_state())
 
                 fill_record = {
                     "id": self.fills_count,
@@ -904,6 +983,7 @@ class LiveHFTTrader:
                     inventory_after=self.inventory,
                     cash_after=self.cash
                 ))
+                asyncio.create_task(self.save_state())
 
                 fill_record = {
                     "id": self.fills_count,

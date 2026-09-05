@@ -107,6 +107,25 @@ class DatabaseManager:
             reason VARCHAR(100)
         );
 
+        CREATE TABLE IF NOT EXISTS engine_state (
+            id INT PRIMARY KEY DEFAULT 1,
+            status VARCHAR(20) NOT NULL DEFAULT 'STOPPED',
+            coin VARCHAR(20) NOT NULL DEFAULT 'PONS',
+            cash NUMERIC(18, 4) NOT NULL DEFAULT 50.0,
+            inventory NUMERIC(18, 6) NOT NULL DEFAULT 0.0,
+            entry_price NUMERIC(18, 6) NOT NULL DEFAULT 0.0,
+            initial_capital NUMERIC(18, 4) NOT NULL DEFAULT 50.0,
+            total_fees NUMERIC(18, 4) NOT NULL DEFAULT 0.0,
+            fills_count INT NOT NULL DEFAULT 0,
+            session_id INT,
+            config JSONB,
+            pair_start_time NUMERIC(18, 2),
+            pair_start_equity NUMERIC(18, 4),
+            pair_fills_count INT DEFAULT 0,
+            pair_status VARCHAR(25) DEFAULT 'ACTIVE',
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
         CREATE INDEX IF NOT EXISTS idx_fills_session ON execution_fills(session_id);
         CREATE INDEX IF NOT EXISTS idx_telemetry_session ON market_telemetry(session_id);
         CREATE INDEX IF NOT EXISTS idx_rotations_session ON pair_rotations(session_id);
@@ -337,6 +356,146 @@ class DatabaseManager:
                 f["timestamp"] = f["timestamp"].isoformat()
             writer.writerow(f)
         return output.getvalue()
+
+    async def save_engine_state(self, state: Dict[str, Any]):
+        """Persists active engine state to survive continuous deployment restarts."""
+        if not self._is_connected or not self.pool:
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO engine_state (
+                        id, status, coin, cash, inventory, entry_price, initial_capital,
+                        total_fees, fills_count, session_id, config, pair_start_time,
+                        pair_start_equity, pair_fills_count, pair_status, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW()
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        coin = EXCLUDED.coin,
+                        cash = EXCLUDED.cash,
+                        inventory = EXCLUDED.inventory,
+                        entry_price = EXCLUDED.entry_price,
+                        initial_capital = EXCLUDED.initial_capital,
+                        total_fees = EXCLUDED.total_fees,
+                        fills_count = EXCLUDED.fills_count,
+                        session_id = EXCLUDED.session_id,
+                        config = EXCLUDED.config,
+                        pair_start_time = EXCLUDED.pair_start_time,
+                        pair_start_equity = EXCLUDED.pair_start_equity,
+                        pair_fills_count = EXCLUDED.pair_fills_count,
+                        pair_status = EXCLUDED.pair_status,
+                        updated_at = NOW()
+                    """,
+                    state.get("id", 1),
+                    state.get("status", "STOPPED"),
+                    state.get("coin", "PONS"),
+                    state.get("cash", 50.0),
+                    state.get("inventory", 0.0),
+                    state.get("entry_price", 0.0),
+                    state.get("initial_capital", 50.0),
+                    state.get("total_fees", 0.0),
+                    state.get("fills_count", 0),
+                    state.get("session_id"),
+                    json.dumps(state.get("config", {})),
+                    state.get("pair_start_time"),
+                    state.get("pair_start_equity"),
+                    state.get("pair_fills_count", 0),
+                    state.get("pair_status", "ACTIVE")
+                )
+        except Exception as e:
+            logger.error(f"Failed to save engine state in DB: {e}")
+
+    async def load_engine_state(self) -> Optional[Dict[str, Any]]:
+        """Loads saved engine state for auto-recovery after container restart."""
+        if not self._is_connected or not self.pool:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, status, coin, cash, inventory, entry_price, initial_capital,
+                           total_fees, fills_count, session_id, config, pair_start_time,
+                           pair_start_equity, pair_fills_count, pair_status, updated_at
+                    FROM engine_state
+                    WHERE id = 1
+                    """
+                )
+                if not row:
+                    return None
+                data = dict(row)
+                if isinstance(data.get("config"), str):
+                    data["config"] = json.loads(data["config"])
+                # Convert Decimals to float for clean numerical typing
+                for k in ("cash", "inventory", "entry_price", "initial_capital", "total_fees", "pair_start_time", "pair_start_equity"):
+                    if data.get(k) is not None:
+                        data[k] = float(data[k])
+                return data
+        except Exception as e:
+            logger.error(f"Failed to load engine state from DB: {e}")
+            return None
+
+    async def get_recent_fills(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retrieves most recent execution fills across sessions for instant dashboard display."""
+        if not self._is_connected or not self.pool:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, session_id, timestamp, coin, side, price, size, notional, fee, fee_type, inventory_after, cash_after
+                    FROM execution_fills
+                    ORDER BY id DESC
+                    LIMIT $1
+                    """,
+                    limit
+                )
+                fills = []
+                for r in rows:
+                    d = dict(r)
+                    d["time"] = d["timestamp"].strftime("%H:%M:%S") if d.get("timestamp") else ""
+                    for k in ("price", "size", "notional", "fee", "inventory_after", "cash_after"):
+                        if d.get(k) is not None:
+                            d[k] = float(d[k])
+                    fills.append(d)
+                return fills
+        except Exception as e:
+            logger.error(f"Failed to fetch recent fills: {e}")
+            return []
+
+    async def get_recent_rotations(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Retrieves most recent coin rotations for instant dashboard display."""
+        if not self._is_connected or not self.pool:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, session_id, timestamp, from_coin, to_coin, duration_sec, pair_pnl, pair_return_pct, fills_count, reason
+                    FROM pair_rotations
+                    ORDER BY id DESC
+                    LIMIT $1
+                    """,
+                    limit
+                )
+                rotations = []
+                for r in rows:
+                    d = dict(r)
+                    d["time"] = d["timestamp"].strftime("%H:%M:%S") if d.get("timestamp") else ""
+                    d["duration_min"] = round(float(d["duration_sec"]) / 60.0, 1) if d.get("duration_sec") else 0.0
+                    for k in ("pair_pnl", "pair_return_pct"):
+                        if d.get(k) is not None:
+                            d[k] = float(d[k])
+                    d["pnl"] = d.get("pair_pnl", 0.0)
+                    d["return_pct"] = d.get("pair_return_pct", 0.0)
+                    d["fills"] = d.get("fills_count", 0)
+                    rotations.append(d)
+                return rotations
+        except Exception as e:
+            logger.error(f"Failed to fetch recent rotations: {e}")
+            return []
 
 
 # Global DB Singleton

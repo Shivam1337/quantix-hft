@@ -40,6 +40,11 @@ A high-frequency market making engine and control dashboard designed for small-c
    * Asynchronous logging of every trading session, pair rotation event, execution fill, and tick telemetry snapshot via `asyncpg`.
    * CSV post-trade export functionality.
 
+8. **Continuous Deployment Auto-Recovery (Dokploy Resilience):**
+   * Persists active runtime state (`status`, `coin`, `cash`, `inventory`, `session_id`, `pair_start_time`, `config`) to PostgreSQL on every fill, rotation, and shutdown.
+   * Intercepts `SIGTERM` during container restarts to flush state cleanly.
+   * Auto-resumes live market making upon container startup if the engine was previously running, preserving accumulated capital, inventory exposure, and dashboard history without manual intervention.
+
 ---
 
 ## Quick Start (Docker Deployment)

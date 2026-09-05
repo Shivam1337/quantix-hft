@@ -44,14 +44,36 @@ class ConfigRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    # Connect to PostgreSQL
+    # 1. Connect to PostgreSQL
     await db.connect()
-    # Start telemetry broadcast loop
+    
+    # 2. Restore engine state & resume trading if running prior to deployment
+    try:
+        saved_state = await db.load_engine_state()
+        if saved_state:
+            recent_fills = await db.get_recent_fills(limit=50)
+            recent_rotations = await db.get_recent_rotations(limit=20)
+            trader.restore_state(saved_state, recent_fills=recent_fills, recent_rotations=recent_rotations)
+            
+            # If the engine was actively trading before this deployment/restart, automatically resume!
+            if saved_state.get("status") == "RUNNING":
+                print(f"[Continuous Deployment] Auto-resuming active trading on {saved_state.get('coin', 'PONS')}...")
+                saved_config = saved_state.get("config", {})
+                asyncio.create_task(trader.start(config=saved_config, resume=True))
+    except Exception as e:
+        print(f"[Continuous Deployment Startup Warning] Could not recover state: {e}")
+
+    # 3. Start telemetry broadcast loop
     asyncio.create_task(broadcast_telemetry_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    # Save exact in-flight trading state so next container resumes seamlessly
+    try:
+        await trader.save_state()
+    except Exception:
+        pass
     await db.close()
 
 
@@ -112,7 +134,9 @@ async def stop_trader():
 
 @app.post("/api/reset")
 async def reset_trader():
+    await trader.stop()
     trader.reset_account()
+    await trader.save_state()
     return {"status": "success", "message": "Account reset to initial capital ($50.00)"}
 
 

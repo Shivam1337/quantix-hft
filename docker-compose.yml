@@ -8,8 +8,6 @@ services:
       POSTGRES_PASSWORD: quantix_secret
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U quantix -d quantix_db"]
       interval: 5s

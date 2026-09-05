@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Simulation Portfolio Constraints ($50 virtual capital)
     INITIAL_CAPITAL: float = float(os.getenv("INITIAL_CAPITAL", "50.0"))
     MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "0.50")) # 50% max per position ($25)
-    ARB_SPREAD_THRESHOLD: float = float(os.getenv("ARB_SPREAD_THRESHOLD", "0.015")) # 1.5% min net spread
+    ARB_SPREAD_THRESHOLD: float = float(os.getenv("ARB_SPREAD_THRESHOLD", "0.003")) # 0.3% min net spread
     GAS_FEE_USD: float = float(os.getenv("GAS_FEE_USD", "0.005")) # Polygon L2 gas cost
     SIMULATED_SLIPPAGE: float = float(os.getenv("SIMULATED_SLIPPAGE", "0.002"))
 

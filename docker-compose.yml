@@ -27,7 +27,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-poly_user}:${POSTGRES_PASSWORD:-poly_secret_password}@postgres:5432/${POSTGRES_DB:-polymarket_sim}
       - ASYNC_DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-poly_user}:${POSTGRES_PASSWORD:-poly_secret_password}@postgres:5432/${POSTGRES_DB:-polymarket_sim}
       - INITIAL_CAPITAL=50.0
-      - ARB_SPREAD_THRESHOLD=0.015
+      - ARB_SPREAD_THRESHOLD=0.003
       - GAS_FEE_USD=0.005
       - MAX_POSITION_PCT=0.50
     ports:

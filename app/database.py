@@ -221,5 +221,11 @@ class Database:
             return list(row.values())[0]
         return None
 
+    async def close(self):
+        """Gracefully closes connection pools on container shutdown."""
+        if self.is_postgres and self.pg_pool:
+            await self.pg_pool.close()
+            logger.info("PostgreSQL connection pool closed cleanly.")
+
 
 db = Database()

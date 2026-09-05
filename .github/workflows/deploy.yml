@@ -1,0 +1,57 @@
+name: CI/CD Pipeline & Continuous Deployment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run Integration Tests & Safety Guards
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Integration Tests
+        run: |
+          python test_system.py
+
+  deploy:
+    name: Continuous Deployment to Dokploy
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Dokploy Webhook
+        env:
+          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
+        run: |
+          if [ -n "$DOKPLOY_WEBHOOK_URL" ]; then
+            echo "Triggering Dokploy Continuous Deployment webhook..."
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$DOKPLOY_WEBHOOK_URL")
+            echo "Dokploy response code: $RESPONSE"
+            if [ "$RESPONSE" -ge 200 ] && [ "$RESPONSE" -lt 300 ]; then
+              echo "Deployment triggered successfully!"
+            else
+              echo "Warning: Dokploy returned HTTP $RESPONSE"
+              exit 1
+            fi
+          else
+            echo "Notice: DOKPLOY_WEBHOOK_URL secret is not configured in GitHub repository settings."
+            echo "If Dokploy Git Auto-Deploy is enabled in the Dokploy dashboard, Dokploy will deploy automatically."
+          fi

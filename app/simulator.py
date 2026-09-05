@@ -34,17 +34,51 @@ class PortfolioSimulator:
         self.spread_threshold: float = settings.ARB_SPREAD_THRESHOLD
 
     async def initialize(self):
-        """Loads state or records starting portfolio history."""
-        # Check if there is an existing portfolio history record
-        row = await db.fetchrow("SELECT * FROM portfolio_history ORDER BY id DESC LIMIT 1")
-        if row:
-            self.cash = float(row["cash"])
-            self.locked_capital = float(row["locked_capital"])
-            self.total_pnl = float(row["total_pnl"])
-            logger.info(f"Loaded existing portfolio state: Cash=${self.cash:.2f}, Equity=${row['total_equity']:.2f}")
-        else:
+        """Loads state or records starting portfolio history, ensuring state continuity across deployments."""
+        try:
+            # 1. Restore position and trade counters to avoid ID collisions on redeployment
+            max_pos_row = await db.fetchrow("SELECT COALESCE(MAX(id), 0) as max_id FROM simulated_positions")
+            if max_pos_row:
+                self.position_counter = int(max_pos_row.get("max_id") or 0)
+
+            trade_cnt_row = await db.fetchrow("SELECT COUNT(*) as cnt FROM simulated_trades")
+            if trade_cnt_row:
+                self.trade_counter = int(trade_cnt_row.get("cnt") or 0)
+
+            # 2. Restore open positions
+            open_rows = await db.fetch("SELECT * FROM simulated_positions WHERE status = 'OPEN'")
+            self.open_positions.clear()
+            for pos in open_rows:
+                pos_id = int(pos["id"])
+                self.open_positions[pos_id] = {
+                    "id": pos_id,
+                    "event_id": pos["event_id"],
+                    "event_title": pos["event_title"],
+                    "position_type": pos.get("position_type", "LONG_BASKET"),
+                    "entry_basket": float(pos["entry_basket"]),
+                    "shares": float(pos["shares"]),
+                    "notional": round(float(pos["shares"]) * float(pos["entry_basket"]), 4),
+                    "entry_friction": round(float(pos["cost"]) - (float(pos["shares"]) * float(pos["entry_basket"])), 4),
+                    "opened_at": time.time()
+                }
+
+            # 3. Check if there is an existing portfolio history record
+            row = await db.fetchrow("SELECT * FROM portfolio_history ORDER BY id DESC LIMIT 1")
+            if row:
+                self.cash = float(row["cash"])
+                self.locked_capital = float(row["locked_capital"])
+                self.total_pnl = float(row["total_pnl"])
+                logger.info(
+                    f"Loaded existing portfolio state: Cash=${self.cash:.2f}, "
+                    f"Equity=${row['total_equity']:.2f}, Open Positions={len(self.open_positions)}, "
+                    f"Total Trades={self.trade_counter}"
+                )
+            else:
+                await self.record_history_snapshot()
+                logger.info(f"Initialized new portfolio with ${self.initial_capital:.2f} capital.")
+        except Exception as e:
+            logger.error(f"Error restoring simulator state: {e}")
             await self.record_history_snapshot()
-            logger.info(f"Initialized new portfolio with ${self.initial_capital:.2f} capital.")
 
     async def record_history_snapshot(self):
         """Saves current balance snapshot into PostgreSQL."""
@@ -243,6 +277,7 @@ class PortfolioSimulator:
         self.locked_capital = 0.0
         self.total_pnl = 0.0
         self.open_positions.clear()
+        await db.execute("UPDATE simulated_positions SET status = 'CANCELLED', closed_at = CURRENT_TIMESTAMP WHERE status = 'OPEN'")
         await self.record_history_snapshot()
         logger.info("Simulator reset to initial $50.00 balance.")
 

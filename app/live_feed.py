@@ -36,10 +36,16 @@ class LiveMarketFeed:
         await self.discover_active_events()
 
         # 2. Start continuous streaming/polling loop
-        asyncio.create_task(self._feed_loop())
+        self._feed_task = asyncio.create_task(self._feed_loop())
 
     async def stop(self):
         self.is_running = False
+        if hasattr(self, "_feed_task") and self._feed_task and not self._feed_task.done():
+            self._feed_task.cancel()
+            try:
+                await self._feed_task
+            except asyncio.CancelledError:
+                pass
         if self.session and not self.session.closed:
             await self.session.close()
         logger.info("Live market feed stopped.")

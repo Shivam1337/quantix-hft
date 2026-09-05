@@ -80,6 +80,7 @@ async def test_all():
     # 5. Test Simulated Execution with $50 Bankroll
     print("\n5. Testing Virtual Portfolio & Simulated Execution ($50 Limit)...")
     await simulator.initialize()
+    await simulator.reset_simulation()
     summary = simulator.get_portfolio_summary()
     assert summary["cash"] == 50.0, f"Expected initial cash $50.00, got ${summary['cash']}"
     print(f"   Initial Cash: ${summary['cash']:.2f} | Locked: ${summary['locked_capital']:.2f}")
@@ -116,10 +117,21 @@ async def test_all():
     assert query_res["success"] is True and query_res["row_count"] >= 1
     print(f"   [PASS] Query returned {query_res['row_count']} row(s): {query_res['rows'][0]}")
 
+    # 7. Test State Continuity Across Re-initialization (CD safety)
+    print("\n7. Testing State Continuity Across Redeployment Re-initialization...")
+    # Re-initialize simulator as if a new container just booted
+    await simulator.initialize()
+    reloaded_summary = simulator.get_portfolio_summary()
+    assert reloaded_summary["open_positions_count"] == 1, "Open positions failed to persist across re-initialization"
+    assert reloaded_summary["cash"] == after_trade["cash"], "Cash balance changed across re-initialization"
+    assert simulator.position_counter >= 1, "Position counter was not restored"
+    print(f"   [PASS] State continuity verified: {reloaded_summary['open_positions_count']} open position(s) restored.")
+
     print("\n" + "=" * 60)
     print("ALL TESTS PASSED SUCCESSFULLY!")
     print("=" * 60)
     await live_feed.stop()
+    await db.close()
 
 
 if __name__ == "__main__":

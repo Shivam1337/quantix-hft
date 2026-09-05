@@ -101,3 +101,29 @@ curl -X POST http://localhost:8000/api/query \
   -H "Content-Type: application/json" \
   -d '{"query": "SELECT id, event_title, entry_basket, shares, cost, status FROM simulated_positions WHERE status = '\''OPEN'\'';"}'
 ```
+
+---
+
+## Continuous Deployment (CD) Architecture
+
+This repository is configured for automated, clean continuous deployment on **Dokploy** (or any Docker Compose environment) with zero data loss and clean container transitions:
+
+### 1. Zero-Downtime Health Check Gates
+- The FastAPI engine exposes `GET /health`, verifying database connectivity and engine status.
+- Docker Compose performs health checks every 10s. Dokploy / reverse proxy will only route live traffic to the newly built container once it passes the `/health` check.
+
+### 2. Graceful Shutdown & Drain (`stop_grace_period: 20s`)
+- Upon receiving a `SIGTERM` during redeployment, the engine gracefully drains active HTTP queries, cancels background scanning loops without data corruption, snapshots portfolio equity, and closes PostgreSQL connection pools cleanly.
+
+### 3. Full State & Position Continuity
+- Database persistence is maintained via the `pgdata` volume.
+- On container boot, `simulator.initialize()` automatically restores:
+  - Cash balance and locked equity
+  - All currently open simulated positions (`simulated_positions WHERE status = 'OPEN'`)
+  - The maximum position counter ID to prevent database primary key collisions across restarts.
+
+### 4. Automated Dokploy Deployment
+You can trigger continuous deployment automatically on every push to `main`:
+- **Method A (Dokploy Native Auto-Deploy):** In your Dokploy dashboard, go to your application -> **Deployments** / **Git** -> Enable **Auto Deploy**. Dokploy will automatically rebuild and deploy when changes are pushed to `main`.
+- **Method B (GitHub Actions Pipeline):** Add `DOKPLOY_WEBHOOK_URL` in your GitHub repository Secrets (`Settings -> Secrets and variables -> Actions`). The `.github/workflows/deploy.yml` workflow will automatically run the integration test suite and trigger Dokploy only when tests pass 100%.
+

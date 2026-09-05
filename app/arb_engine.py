@@ -29,10 +29,16 @@ class ArbitrageEngine:
     async def start(self):
         self.is_running = True
         logger.info("Starting real-time Arbitrage Engine...")
-        asyncio.create_task(self._engine_loop())
+        self._task = asyncio.create_task(self._engine_loop())
 
     async def stop(self):
         self.is_running = False
+        if hasattr(self, "_task") and self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
         logger.info("Arbitrage Engine stopped.")
 
     async def _engine_loop(self):

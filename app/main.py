@@ -40,10 +40,12 @@ async def lifespan(app: FastAPI):
     await live_feed.start()
     await arb_engine.start()
     yield
-    # Shutdown
-    logger.info("Shutting down engine...")
+    # Graceful Shutdown
+    logger.info("Shutting down engine gracefully...")
     await arb_engine.stop()
     await live_feed.stop()
+    await db.close()
+    logger.info("Engine shutdown complete.")
 
 
 app = FastAPI(
@@ -74,6 +76,23 @@ async def serve_dashboard():
         with open(index_file, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     return HTMLResponse("<h2>Dashboard is loading...</h2>")
+
+
+@app.get("/health")
+async def health_check():
+    """Liveness and readiness probe for Docker / Dokploy / Traefik."""
+    try:
+        val = await db.fetchval("SELECT 1")
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "database_type": "PostgreSQL" if db.is_postgres else "SQLite",
+            "engine_running": arb_engine.is_running,
+            "uptime_seconds": round(time.time() - start_time, 1)
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Unhealthy: {str(e)}")
 
 
 @app.get("/api/status")

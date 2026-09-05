@@ -4,3 +4,4 @@ websockets>=13.0
 requests>=2.31.0
 numpy>=1.26.0
 pandas>=2.2.0
+asyncpg>=0.30.0

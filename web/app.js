@@ -39,6 +39,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnStop = document.getElementById("btn-stop");
     const btnReset = document.getElementById("btn-reset");
     const btnScan = document.getElementById("btn-scan");
+    const btnTheme = document.getElementById("btn-theme");
+    const btnExport = document.getElementById("btn-export");
 
     const coinSelect = document.getElementById("coin-select");
     const orderSizeInput = document.getElementById("order-size-input");
@@ -52,6 +54,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const marketSpreadVal = document.getElementById("market-spread-val");
     const maxInvInput = document.getElementById("max-inv-input");
     const circuitBreakerBadge = document.getElementById("circuit-breaker-badge");
+
+    // Theme Management (Light mode is default)
+    const savedTheme = localStorage.getItem("quantix_theme") || "light";
+    if (savedTheme === "dark") {
+        document.body.classList.add("dark-theme");
+        if (btnTheme) btnTheme.textContent = "☀️ Light";
+    } else {
+        document.body.classList.remove("dark-theme");
+        if (btnTheme) btnTheme.textContent = "🌙 Dark";
+    }
+
+    const isCurrentDark = () => document.body.classList.contains("dark-theme");
 
     // Sliders event listeners
     gammaInput.addEventListener("input", (e) => gammaVal.textContent = parseFloat(e.target.value).toFixed(2));
@@ -90,9 +104,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     display: false
                 },
                 y: {
-                    grid: { color: "#212b3d" },
+                    grid: { color: isCurrentDark() ? "#212b3d" : "#e2e8f0" },
                     ticks: {
-                        color: "#8b949e",
+                        color: isCurrentDark() ? "#8b949e" : "#64748b",
                         font: { family: "monospace", size: 10 },
                         callback: (v) => "$" + v.toFixed(2)
                     }
@@ -100,6 +114,13 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
     });
+
+    function updateChartTheme() {
+        const dark = isCurrentDark();
+        equityChart.options.scales.y.grid.color = dark ? "#212b3d" : "#e2e8f0";
+        equityChart.options.scales.y.ticks.color = dark ? "#8b949e" : "#64748b";
+        equityChart.update("none");
+    }
 
     // WebSocket Connection
     let ws = null;
@@ -326,6 +347,23 @@ document.addEventListener("DOMContentLoaded", () => {
             btnScan.disabled = false;
         }
     });
+
+    // Theme Toggle Handler
+    if (btnTheme) {
+        btnTheme.addEventListener("click", () => {
+            const isDark = document.body.classList.toggle("dark-theme");
+            btnTheme.textContent = isDark ? "☀️ Light" : "🌙 Dark";
+            localStorage.setItem("quantix_theme", isDark ? "dark" : "light");
+            updateChartTheme();
+        });
+    }
+
+    // Export CSV Handler
+    if (btnExport) {
+        btnExport.addEventListener("click", () => {
+            window.location.href = "/api/history/export";
+        });
+    }
 
     // Start WebSocket
     connectWebSocket();

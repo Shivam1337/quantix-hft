@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY signals.py trader.py server.py ./
+COPY database.py signals.py trader.py server.py ./
 COPY web ./web
 
 # Expose Web Dashboard & WebSocket port

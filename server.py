@@ -6,13 +6,15 @@ Serves the HFT Web Dashboard and streams live market-making state to clients.
 import asyncio
 import os
 import requests
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from trader import LiveHFTTrader
+from database import db
+from fastapi.responses import Response
 
 app = FastAPI(title="HFT Microstructure Market Making Engine")
 trader = LiveHFTTrader()
@@ -36,8 +38,15 @@ class ConfigRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
+    # Connect to PostgreSQL
+    await db.connect()
     # Start telemetry broadcast loop
     asyncio.create_task(broadcast_telemetry_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await db.close()
 
 
 async def broadcast_telemetry_loop():
@@ -144,6 +153,45 @@ async def run_screener():
         return {"candidates": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/history/sessions")
+async def get_sessions(limit: int = 20):
+    """Returns past trading runs stored in PostgreSQL."""
+    sessions = await db.get_sessions(limit=limit)
+    return {"sessions": sessions}
+
+
+@app.get("/api/history/fills")
+async def get_fills(session_id: Optional[int] = None, limit: int = 100):
+    """Returns execution fills stored in PostgreSQL."""
+    fills = await db.get_fills(session_id=session_id, limit=limit)
+    return {"fills": fills}
+
+
+@app.get("/api/history/export")
+async def export_session_csv(session_id: Optional[int] = None):
+    """Downloads execution fills as a CSV for external analysis."""
+    if session_id is None:
+        if trader.session_id:
+            session_id = trader.session_id
+        else:
+            sessions = await db.get_sessions(limit=1)
+            if sessions:
+                session_id = sessions[0]["id"]
+
+    if session_id is None:
+        return Response(
+            content="timestamp,coin,side,price,size,notional,fee,fee_type,inventory_after,cash_after\n",
+            media_type="text/csv"
+        )
+
+    csv_data = await db.export_session_csv(session_id=session_id)
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=session_{session_id}_fills.csv"}
+    )
 
 
 # Mount static web dashboard

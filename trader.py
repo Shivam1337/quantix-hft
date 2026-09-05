@@ -8,10 +8,11 @@ import asyncio
 import json
 import time
 import math
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import numpy as np
 
 from signals import BookLevel, OrderBook, AvellanedaStoikovModel, RollingVolatility, calculate_ofi
+from database import db
 
 
 class LiveHFTTrader:
@@ -24,6 +25,7 @@ class LiveHFTTrader:
     def __init__(self):
         self.status = "STOPPED"  # STOPPED, RUNNING
         self.mode = "SIMULATED"   # SIMULATED (future: LIVE)
+        self.session_id: Optional[int] = None
 
         # Configurable Parameters
         self.coin = "PONS"
@@ -138,6 +140,12 @@ class LiveHFTTrader:
                 self.configure(config)
 
             self.status = "RUNNING"
+            # Persist new trading session in DB
+            self.session_id = await db.create_session(
+                coin=self.coin,
+                initial_capital=self.initial_capital,
+                config=self.get_telemetry().get("config", {})
+            )
             self._task = asyncio.create_task(self._market_data_loop())
 
     async def stop(self):
@@ -152,6 +160,17 @@ class LiveHFTTrader:
                     pass
             self.active_bid = 0.0
             self.active_ask = 0.0
+
+            # Finalize session in DB
+            if self.session_id:
+                mid = self.mid_price if self.mid_price > 0 else 1.0
+                final_eq = self.cash + (self.inventory * mid)
+                await db.end_session(
+                    session_id=self.session_id,
+                    final_equity=final_eq,
+                    net_pnl=final_eq - self.initial_capital,
+                    total_fills=self.fills_count
+                )
 
     async def _market_data_loop(self):
         """Persistent WebSocket loop connecting to Hyperliquid."""
@@ -260,6 +279,18 @@ class LiveHFTTrader:
                 self.cash += (self.inventory * exit_px) - fee
                 self.total_fees += fee
                 self.fills_count += 1
+                asyncio.create_task(db.log_fill(
+                    session_id=self.session_id,
+                    coin=self.coin,
+                    side="STOP_LOSS_SELL" if self.inventory > 0 else "STOP_LOSS_BUY",
+                    price=exit_px,
+                    size=abs(self.inventory),
+                    notional=notional,
+                    fee=fee,
+                    fee_type="TAKER",
+                    inventory_after=0.0,
+                    cash_after=self.cash
+                ))
                 self.recent_fills.insert(0, {
                     "id": self.fills_count,
                     "time": time.strftime("%H:%M:%S", time.localtime(now)),
@@ -358,6 +389,21 @@ class LiveHFTTrader:
             if len(self.equity_history) > 150:
                 self.equity_history.pop(0)
 
+            # Log periodic telemetry to PostgreSQL
+            if self.session_id:
+                asyncio.create_task(db.log_telemetry(
+                    session_id=self.session_id,
+                    coin=self.coin,
+                    mid_price=mid,
+                    spread_bps=new_book.spread_bps,
+                    ofi=ofi,
+                    volatility_bps=self.volatility * 10000.0,
+                    equity=equity,
+                    inventory=self.inventory,
+                    circuit_breaker_active=self.circuit_breaker_active,
+                    circuit_breaker_reason=self.circuit_breaker_reason
+                ))
+
     def _handle_trades(self, trade_list: List[Dict[str, Any]]):
         """Matches incoming real-world market trades against our active quotes."""
         if not self.active_bid or not self.active_ask or self.active_bid <= 0:
@@ -392,6 +438,19 @@ class LiveHFTTrader:
 
                 self.total_fees += fee
                 self.fills_count += 1
+
+                asyncio.create_task(db.log_fill(
+                    session_id=self.session_id,
+                    coin=self.coin,
+                    side="SELL",
+                    price=fill_px,
+                    size=fill_sz,
+                    notional=notional,
+                    fee=fee,
+                    fee_type="MAKER",
+                    inventory_after=self.inventory,
+                    cash_after=self.cash
+                ))
 
                 fill_record = {
                     "id": self.fills_count,
@@ -433,6 +492,19 @@ class LiveHFTTrader:
 
                 self.total_fees += fee
                 self.fills_count += 1
+
+                asyncio.create_task(db.log_fill(
+                    session_id=self.session_id,
+                    coin=self.coin,
+                    side="BUY",
+                    price=fill_px,
+                    size=fill_sz,
+                    notional=notional,
+                    fee=fee,
+                    fee_type="MAKER",
+                    inventory_after=self.inventory,
+                    cash_after=self.cash
+                ))
 
                 fill_record = {
                     "id": self.fills_count,

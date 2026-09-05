@@ -143,6 +143,119 @@ async def run_screener():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/llm")
+async def get_llm_summary(format: str = "markdown"):
+    """
+    Returns an executive diagnostic report optimized for LLMs and AI monitoring agents.
+    Provides real-time P&L, inventory exposure, microstructure signals, and risk alerts.
+    """
+    t = trader.get_telemetry()
+    status = t["status"]
+    coin = t["coin"]
+    equity = t["equity"]
+    net_pnl = t["net_pnl"]
+    ret_pct = t["return_pct"]
+    inv = t["inventory"]
+    inv_usd = t["inventory_usd"]
+    max_inv = t["config"]["max_inventory_usd"]
+    inv_utilization = abs(inv_usd) / max(max_inv, 1.0) * 100.0
+    ofi = t["ofi"]
+    vol = t["volatility"]
+    fills = t["fills_count"]
+    fees = t["total_fees"]
+    mid = t["mid_price"]
+    spread = t["spread_bps"]
+    active_bid = t["active_bid"]
+    active_ask = t["active_ask"]
+
+    # Microstructure Assessment
+    flow_state = "Neutral"
+    if ofi > 1000:
+        flow_state = f"Strong Bullish Order Flow (+{ofi:,.0f})"
+    elif ofi < -1000:
+        flow_state = f"Strong Bearish Order Flow ({ofi:,.0f})"
+
+    inv_risk = "Low"
+    if inv_utilization > 75:
+        inv_risk = "CRITICAL (Near Circuit Breaker)"
+    elif inv_utilization > 40:
+        inv_risk = "Moderate (Inventory Skew Active)"
+
+    recent = t["recent_fills"][:5]
+
+    if format == "json":
+        return {
+            "status": status,
+            "asset": coin,
+            "financials": {
+                "equity_usd": equity,
+                "net_pnl_usd": net_pnl,
+                "return_pct": ret_pct,
+                "cash_usd": t["cash"],
+                "total_fees_usd": fees
+            },
+            "inventory": {
+                "contracts": inv,
+                "notional_usd": inv_usd,
+                "max_limit_usd": max_inv,
+                "utilization_pct": round(inv_utilization, 1),
+                "risk_level": inv_risk
+            },
+            "market_microstructure": {
+                "mid_price": mid,
+                "spread_bps": spread,
+                "order_flow_imbalance": ofi,
+                "flow_sentiment": flow_state,
+                "volatility_bps": vol
+            },
+            "quoting": {
+                "active_bid": active_bid,
+                "active_ask": active_ask,
+                "quote_size_usd": t["config"]["order_size_usd"]
+            },
+            "fills": {
+                "total_count": fills,
+                "recent_fills": recent
+            }
+        }
+
+    # Markdown format
+    md = f"""# Quantix HFT Production Telemetry Report
+
+### 1. System & Financial Summary
+- **Status:** `{status}` | **Target Asset:** `{coin}` | **Mode:** `{t['mode']}`
+- **Total Equity:** `${equity:,.2f}`
+- **Net P&L:** `${net_pnl:+,.2f}` (`{ret_pct:+.2f}%`)
+- **Cash Available:** `${t['cash']:,.2f}`
+- **Total Maker Fees Paid:** `${fees:.4f}`
+- **Total Executions:** `{fills}` fills
+
+### 2. Inventory & Risk Exposure
+- **Position:** `{inv:+.4f} {coin}` (`${inv_usd:+,.2f} USD`)
+- **Inventory Limit:** `${max_inv:,.2f}` (`{inv_utilization:.1f}%` utilization)
+- **Inventory Risk State:** `{inv_risk}`
+
+### 3. Live Microstructure & Order Book
+- **Mid Price:** `${mid:.4f}`
+- **Market Spread:** `{spread:.2f} bps`
+- **Order Flow Imbalance (OFI):** `{ofi:,.1f}` ({flow_state})
+- **Rolling Volatility:** `{vol:.1f} bps`
+- **Active Post-Only Quotes:**
+  - **Bid:** `{f"${active_bid:.4f}" if active_bid else "None (Pull/Risk Limit)"}`
+  - **Ask:** `{f"${active_ask:.4f}" if active_ask else "None (Pull/Risk Limit)"}`
+
+### 4. Recent Fills
+"""
+    if recent:
+        for f in recent:
+            md += f"- `{f['time']}` | **{f['side']}** | Px: `${f['price']:.4f}` | Sz: `{f['size']}` (${f['notional']:.2f}) | Inv After: `{f['inventory_after']:+.2f}`\n"
+    else:
+        md += "- No recent fills.\n"
+
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(md)
+
+
 # Mount static web dashboard
 web_dir = os.path.join(os.path.dirname(__file__), "web")
 if not os.path.exists(web_dir):

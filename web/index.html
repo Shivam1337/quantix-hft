@@ -20,6 +20,7 @@
                         <span id="status-indicator" class="status-indicator stopped">
                             <span class="status-dot"></span> <span id="status-text">STOPPED</span>
                         </span>
+                        <span id="circuit-breaker-badge" class="badge-breaker" style="display: none;">PULLED: SPREAD COMPRESSED</span>
                     </div>
                 </div>
             </div>
@@ -96,16 +97,30 @@
 
                 <div class="form-group">
                     <div class="slider-header">
+                        <label>Spread Floor Gatekeeper (bps)</label>
+                        <span id="market-spread-val">4.5 bps</span>
+                    </div>
+                    <input type="range" id="market-spread-input" class="slider" min="2.0" max="15.0" step="0.5" value="4.5">
+                    <span class="slider-hint">Withdraws all quotes if market spread drops below this floor</span>
+                </div>
+
+                <div class="form-group">
+                    <div class="slider-header">
                         <label>Min Half-Spread (bps)</label>
                         <span id="spread-val">2.0 bps</span>
                     </div>
                     <input type="range" id="spread-input" class="slider" min="1.0" max="10.0" step="0.5" value="2.0">
-                    <span class="slider-hint">Ensures edge covers exchange maker/taker fees</span>
+                    <span class="slider-hint">Target quoting spread inside the market</span>
                 </div>
 
                 <div class="form-group">
                     <label>Max Inventory ($ USD Limit)</label>
-                    <input type="number" id="max-inv-input" class="form-control" value="250" min="50" max="1000" step="25">
+                    <input type="number" id="max-inv-input" class="form-control" value="200" min="50" max="1000" step="25">
+                </div>
+
+                <div class="fee-info-box">
+                    <div class="fee-row"><span>Hyperliquid Base Maker:</span> <strong>0.015% (1.5 bps)</strong></div>
+                    <div class="fee-row"><span>Hyperliquid Base Taker:</span> <strong>0.045% (4.5 bps)</strong></div>
                 </div>
 
                 <div class="action-buttons">

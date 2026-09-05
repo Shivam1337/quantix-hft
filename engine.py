@@ -43,7 +43,8 @@ class HFMarketMakingSimulator:
         model: AvellanedaStoikovModel,
         initial_capital: float = 1000.0,
         order_size_notional: float = 50.0,  # $50 quotes
-        maker_fee_rate: float = 0.0001,    # 0.01% maker fee (or negative for rebates)
+        maker_fee_rate: float = 0.00015,   # 0.015% Hyperliquid real base maker fee
+        taker_fee_rate: float = 0.00045,   # 0.045% Hyperliquid real base taker fee
         latency_ms: float = 10.0,          # Simulated 10ms one-way transit/execution latency
         max_inventory_notional: float = 300.0, # Circuit breaker max position size
         use_inventory_skew: bool = True,

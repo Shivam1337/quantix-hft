@@ -48,12 +48,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const betaVal = document.getElementById("beta-val");
     const spreadInput = document.getElementById("spread-input");
     const spreadVal = document.getElementById("spread-val");
+    const marketSpreadInput = document.getElementById("market-spread-input");
+    const marketSpreadVal = document.getElementById("market-spread-val");
     const maxInvInput = document.getElementById("max-inv-input");
+    const circuitBreakerBadge = document.getElementById("circuit-breaker-badge");
 
     // Sliders event listeners
     gammaInput.addEventListener("input", (e) => gammaVal.textContent = parseFloat(e.target.value).toFixed(2));
     betaInput.addEventListener("input", (e) => betaVal.textContent = parseFloat(e.target.value).toFixed(2));
     spreadInput.addEventListener("input", (e) => spreadVal.textContent = parseFloat(e.target.value).toFixed(1) + " bps");
+    if (marketSpreadInput) {
+        marketSpreadInput.addEventListener("input", (e) => marketSpreadVal.textContent = parseFloat(e.target.value).toFixed(1) + " bps");
+    }
 
     // Initialize Chart.js
     const ctx = document.getElementById("equity-chart").getContext("2d");
@@ -137,6 +143,15 @@ document.addEventListener("DOMContentLoaded", () => {
         statusText.textContent = data.status;
         btnStart.disabled = isRunning;
         btnStop.disabled = !isRunning;
+
+        if (circuitBreakerBadge) {
+            if (data.circuit_breaker_active) {
+                circuitBreakerBadge.style.display = "inline-block";
+                circuitBreakerBadge.textContent = "PULLED: " + (data.circuit_breaker_reason || "PROTECTIVE HALT");
+            } else {
+                circuitBreakerBadge.style.display = "none";
+            }
+        }
 
         // Metrics
         equityVal.textContent = `$${data.equity.toFixed(2)}`;
@@ -257,6 +272,7 @@ document.addEventListener("DOMContentLoaded", () => {
             gamma: parseFloat(gammaInput.value),
             beta_ofi: parseFloat(betaInput.value),
             min_spread_bps: parseFloat(spreadInput.value),
+            min_market_spread_bps: marketSpreadInput ? parseFloat(marketSpreadInput.value) : 4.5,
             max_inventory_usd: parseFloat(maxInvInput.value),
             mode: "SIMULATED"
         };

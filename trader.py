@@ -28,20 +28,29 @@ class LiveHFTTrader:
         # Configurable Parameters
         self.coin = "PONS"
         self.order_size_usd = 50.0
-        self.gamma = 0.5
+        self.gamma = 0.6
         self.kappa = 1.5
-        self.beta_ofi = 0.6
+        self.beta_ofi = 0.7
         self.min_spread_bps = 2.0
-        self.max_inventory_usd = 250.0
-        self.maker_fee_rate = 0.0001 # 0.01%
+        self.min_market_spread_bps = 4.5  # Gatekeeper: only quote when book spread >= 4.5 bps
+        self.max_inventory_usd = 200.0
+        self.maker_fee_rate = 0.00015     # 0.015% Hyperliquid real base maker fee
+        self.taker_fee_rate = 0.00045     # 0.045% Hyperliquid real base taker fee
         self.latency_ms = 10.0
 
         # Financial State
         self.initial_capital = 1000.0
         self.cash = 1000.0
         self.inventory = 0.0
+        self.entry_price = 0.0            # Weighted average entry price of inventory
         self.total_fees = 0.0
         self.fills_count = 0
+
+        # Momentum & Protection State
+        self.price_history: List[Tuple[float, float]] = [] # (time, mid_price)
+        self.circuit_breaker_active = False
+        self.circuit_breaker_reason = ""
+        self.last_circuit_break_time = 0.0
 
         # Market State
         self.mid_price = 0.0
@@ -79,7 +88,10 @@ class LiveHFTTrader:
         self.gamma = float(config.get("gamma", self.gamma))
         self.beta_ofi = float(config.get("beta_ofi", self.beta_ofi))
         self.min_spread_bps = float(config.get("min_spread_bps", self.min_spread_bps))
+        self.min_market_spread_bps = float(config.get("min_market_spread_bps", self.min_market_spread_bps))
         self.max_inventory_usd = float(config.get("max_inventory_usd", self.max_inventory_usd))
+        self.maker_fee_rate = float(config.get("maker_fee_rate", self.maker_fee_rate))
+        self.taker_fee_rate = float(config.get("taker_fee_rate", self.taker_fee_rate))
         self.mode = config.get("mode", self.mode)
 
         # Infer tick size based on price
@@ -106,8 +118,11 @@ class LiveHFTTrader:
         """Resets paper capital and clears performance history."""
         self.cash = self.initial_capital
         self.inventory = 0.0
+        self.entry_price = 0.0
         self.total_fees = 0.0
         self.fills_count = 0
+        self.price_history.clear()
+        self.circuit_breaker_active = False
         self.recent_fills.clear()
         self.equity_history.clear()
         self.active_bid = 0.0
@@ -208,16 +223,103 @@ class LiveHFTTrader:
         if not self.model:
             self.configure({})
 
+        # 1. Minimum Market Spread Gatekeeper:
+        # Never quote when spread < min_market_spread_bps because round-trip fees (3 bps) exceed edge
+        if new_book.spread_bps < self.min_market_spread_bps:
+            self.active_bid = 0.0
+            self.active_ask = float('inf')
+            self.pending_bid = 0.0
+            self.pending_ask = float('inf')
+            self.circuit_breaker_active = True
+            self.circuit_breaker_reason = f"Spread too tight ({new_book.spread_bps:.2f} < {self.min_market_spread_bps:.1f} bps)"
+            return
+
+        # 2. Track 10-second Momentum
+        self.price_history.append((now, mid))
+        self.price_history = [p for p in self.price_history if now - p[0] <= 10.0]
+        momentum_bps = 0.0
+        if len(self.price_history) >= 2:
+            oldest_px = self.price_history[0][1]
+            momentum_bps = (mid - oldest_px) / oldest_px * 10000.0
+
+        dumping = (momentum_bps < -10.0) or (ofi < -1200.0)
+        pumping = (momentum_bps > +10.0) or (ofi > +1200.0)
+
+        # 3. Emergency Taker Stop-Loss:
+        # If inventory drawdown exceeds 30 bps from entry price, execute immediate taker liquidation
+        inv_usd = self.inventory * mid
+        abs_inv = abs(inv_usd)
+        if self.entry_price > 0 and abs_inv > 30.0:
+            price_delta_bps = (mid - self.entry_price) / self.entry_price * 10000.0
+            unrealized_loss_bps = -price_delta_bps if self.inventory > 0 else price_delta_bps
+            if unrealized_loss_bps > 25.0:  # 25 bps stop-loss
+                # Emergency close via taker order
+                exit_px = new_book.best_bid if self.inventory > 0 else new_book.best_ask
+                notional = abs_inv
+                fee = notional * self.taker_fee_rate
+                self.cash += (self.inventory * exit_px) - fee
+                self.total_fees += fee
+                self.fills_count += 1
+                self.recent_fills.insert(0, {
+                    "id": self.fills_count,
+                    "time": time.strftime("%H:%M:%S", time.localtime(now)),
+                    "side": "STOP_LOSS_SELL" if self.inventory > 0 else "STOP_LOSS_BUY",
+                    "price": round(exit_px, 6),
+                    "size": round(abs(self.inventory), 4),
+                    "notional": round(notional, 2),
+                    "fee": round(fee, 4),
+                    "inventory_after": 0.0
+                })
+                self.inventory = 0.0
+                self.entry_price = 0.0
+                self.active_bid = 0.0
+                self.active_ask = float('inf')
+                self.last_circuit_break_time = now + 10.0 # Freeze for 10s
+                return
+
+        # Check circuit breaker timeout
+        if now < self.last_circuit_break_time:
+            self.circuit_breaker_active = True
+            self.circuit_breaker_reason = "Cooling down after stop-loss"
+            self.active_bid = 0.0
+            self.active_ask = float('inf')
+            return
+
+        # 4. Unilateral Inventory Offloading:
+        # If holding long inventory ($ > 30), shut off buying completely!
+        # If holding short inventory ($ < -30), shut off selling completely!
+        can_bid = True
+        can_ask = True
+
+        if inv_usd > 30.0:
+            can_bid = False  # DO NOT BUY
+            can_ask = True   # AGGRESSIVELY SELL
+        elif inv_usd < -30.0:
+            can_ask = False  # DO NOT SELL
+            can_bid = True   # AGGRESSIVELY BUY
+
+        if abs_inv >= self.max_inventory_usd:
+            can_bid = (self.inventory < 0)
+            can_ask = (self.inventory > 0)
+
+        # Freeze quotes against the trend
+        if dumping:
+            can_bid = False  # Never buy into a falling knife
+            self.circuit_breaker_active = True
+            self.circuit_breaker_reason = f"Sell waterfall ({momentum_bps:.1f} bps / OFI {ofi:.0f})"
+        elif pumping:
+            can_ask = False  # Never short into a violent pump
+            self.circuit_breaker_active = True
+            self.circuit_breaker_reason = f"Buy surge (+{momentum_bps:.1f} bps / OFI {ofi:.0f})"
+        else:
+            self.circuit_breaker_active = False
+            self.circuit_breaker_reason = ""
+
         # Activate pending quote after simulated transit latency
         if self.pending_quote_time > 0 and now >= self.pending_quote_time:
             self.active_bid = self.pending_bid
             self.active_ask = self.pending_ask
             self.pending_quote_time = 0.0
-
-        # Check circuit breakers
-        current_inv_notional = abs(self.inventory * mid)
-        can_bid = (current_inv_notional < self.max_inventory_usd) or (self.inventory < 0)
-        can_ask = (current_inv_notional < self.max_inventory_usd) or (self.inventory > 0)
 
         # Generate quotes with AS+OFI model
         target_bid, target_ask = self.model.generate_quotes(
@@ -228,6 +330,12 @@ class LiveHFTTrader:
             use_inventory_skew=True,
             use_ofi=True
         )
+
+        # If holding inventory, quote the exit side aggressively at the top of book to dump fast
+        if inv_usd > 30.0 and new_book.best_ask > 0:
+            target_ask = min(target_ask, new_book.best_ask)
+        elif inv_usd < -30.0 and new_book.best_bid > 0:
+            target_bid = max(target_bid, new_book.best_bid)
 
         quote_qty = round(self.order_size_usd / mid, 4)
         self.our_quote_size = quote_qty
@@ -268,8 +376,20 @@ class LiveHFTTrader:
                 notional = fill_sz * fill_px
                 fee = notional * self.maker_fee_rate
 
+                # Update entry price
+                if self.inventory < 0:
+                    self.entry_price = ((self.entry_price * abs(self.inventory)) + (fill_px * fill_sz)) / (abs(self.inventory) + fill_sz)
+                elif abs(self.inventory - fill_sz) < 1e-4:
+                    self.entry_price = 0.0
+                else:
+                    self.entry_price = fill_px
+
                 self.cash += (notional - fee)
                 self.inventory -= fill_sz
+                if abs(self.inventory) < 1e-4:
+                    self.inventory = 0.0
+                    self.entry_price = 0.0
+
                 self.total_fees += fee
                 self.fills_count += 1
 
@@ -297,8 +417,20 @@ class LiveHFTTrader:
                 notional = fill_sz * fill_px
                 fee = notional * self.maker_fee_rate
 
+                # Update entry price
+                if self.inventory > 0:
+                    self.entry_price = ((self.entry_price * self.inventory) + (fill_px * fill_sz)) / (self.inventory + fill_sz)
+                elif abs(self.inventory + fill_sz) < 1e-4:
+                    self.entry_price = 0.0
+                else:
+                    self.entry_price = fill_px
+
                 self.cash -= (notional + fee)
                 self.inventory += fill_sz
+                if abs(self.inventory) < 1e-4:
+                    self.inventory = 0.0
+                    self.entry_price = 0.0
+
                 self.total_fees += fee
                 self.fills_count += 1
 
@@ -344,6 +476,10 @@ class LiveHFTTrader:
             "active_ask": self.active_ask if self.active_ask < float('inf') else None,
             "ofi": self.current_ofi,
             "volatility": round(self.volatility * 10000, 2), # in bps
+            "circuit_breaker_active": self.circuit_breaker_active,
+            "circuit_breaker_reason": self.circuit_breaker_reason,
+            "maker_fee_rate": self.maker_fee_rate,
+            "taker_fee_rate": self.taker_fee_rate,
             "fills_count": self.fills_count,
             "total_fees": round(self.total_fees, 4),
             "book_depth": self.book_depth,
@@ -355,6 +491,9 @@ class LiveHFTTrader:
                 "gamma": self.gamma,
                 "beta_ofi": self.beta_ofi,
                 "min_spread_bps": self.min_spread_bps,
-                "max_inventory_usd": self.max_inventory_usd
+                "min_market_spread_bps": self.min_market_spread_bps,
+                "max_inventory_usd": self.max_inventory_usd,
+                "maker_fee_bps": round(self.maker_fee_rate * 10000, 1),
+                "taker_fee_bps": round(self.taker_fee_rate * 10000, 1)
             }
         }

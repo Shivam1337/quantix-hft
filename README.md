@@ -2,7 +2,7 @@
 
 A high-frequency market making engine and control dashboard designed for small-capital quantitative traders ($500 – $5,000). The system exploits capacity-constrained long-tail order books on crypto perpetual exchanges (Hyperliquid) where tier-1 institutional firms cannot trade due to market impact.
 
-![Quantix Backtest](backtest_results.png)
+---
 
 ## Core Architecture & Alpha Strategy
 
@@ -15,11 +15,19 @@ A high-frequency market making engine and control dashboard designed for small-c
    $$r^*(s, q) = r(s, q) + \beta_{\text{ofi}} \cdot \tanh\left(\frac{\text{OFI}_t}{50}\right) \cdot \frac{\text{Spread}}{2}$$
    Anticipates aggressive market sweeps 50ms–1s in advance and asymmetrically shifts or cancels vulnerable quotes.
 
-3. **Discrete Event Matching Engine:**
-   * 10ms simulated transit latency delay.
-   * Post-only limit order queue priority.
-   * Realistic fill matching against live market trade streams.
-   * Adverse selection tracking (+1s and +5s post-fill returns).
+3. **Protective Microstructure Circuit Breakers:**
+   * **Spread Floor Gatekeeper ($4.5\text{ bps}$):** Automatically pulls all quotes to cash when market spread compresses below round-trip fee thresholds.
+   * **Unilateral Inventory Offload:** Completely kills buy quotes once holding $> \$30$ of inventory and aggressively quotes asks at the top of the book.
+   * **Waterfall Momentum Halt:** Freezes buy quotes if price drops $> 10\text{ bps}$ in 10 seconds or $\text{OFI} < -1200$.
+   * **Emergency Taker Stop-Loss:** Market-liquidates positions if inventory drops $> 25\text{ bps}$ below weighted average entry price.
+
+4. **Real Exchange Fee Modeling:**
+   * Base Maker Fee: $0.015\%$ ($1.5\text{ bps}$)
+   * Base Taker Fee: $0.045\%$ ($4.5\text{ bps}$)
+
+5. **PostgreSQL Persistence Layer:**
+   * Asynchronous logging of every trading session, execution fill, and tick telemetry snapshot via `asyncpg`.
+   * CSV post-trade export functionality.
 
 ---
 
@@ -37,40 +45,8 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 * **Scan Pairs:** Built-in screener finds newly active high-spread pairs across the exchange.
 * **Live Ladder:** Visualizes the order book with our active quotes highlighted inside the spread.
 * **Equity & P&L Curve:** Real-time Chart.js telemetry stream via WebSockets.
-
----
-
-## Local Development (Without Docker)
-
-1. **Install Dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Run Unit Tests:**
-   ```bash
-   python -m unittest test_microstructure.py
-   ```
-
-3. **Run the Market Screener:**
-   ```bash
-   python screener.py
-   ```
-
-4. **Record Live Tick Data:**
-   ```bash
-   python data_collector.py PONS 60
-   ```
-
-5. **Run Backtest Replay:**
-   ```bash
-   python run_backtest.py tick_data_pons.jsonl PONS
-   ```
-
-6. **Start Local Server:**
-   ```bash
-   python -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload
-   ```
+* **Light / Dark Mode:** Toggle between crisp Light Mode (default) and Dark Mode.
+* **Export CSV:** 1-click download of session fills from PostgreSQL for post-trade investigation.
 
 ---
 
@@ -78,9 +54,12 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 
 * `GET /api/status`: Current bot state, parameters, equity, and inventory.
 * `POST /api/start`: Starts simulated or live quoting with specified config.
-* `POST /api/stop`: Stops quoting immediately.
+* `POST /api/stop`: Stops quoting immediately and finalizes the DB session.
 * `POST /api/reset`: Resets paper capital to $1,000.
 * `GET /api/screener`: Scans Hyperliquid for high-spread/high-volume tokens.
+* `GET /api/history/sessions`: Retrieves past trading runs stored in PostgreSQL.
+* `GET /api/history/fills`: Retrieves execution fills stored in PostgreSQL.
+* `GET /api/history/export`: Downloads execution fills as a CSV for external analysis.
 * `WS /ws/live`: Real-time bi-directional telemetry broadcast at 4Hz.
 
 ---
@@ -89,21 +68,18 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 
 ```
 ├── Dockerfile                  # Production container definition
-├── docker-compose.yml          # Container orchestration
+├── docker-compose.yml          # Container orchestration (FastAPI + PostgreSQL)
 ├── requirements.txt            # Python dependencies
 ├── signals.py                  # Avellaneda-Stoikov & OFI mathematics
-├── engine.py                   # Event-driven matching simulator
+├── database.py                 # PostgreSQL async persistence layer & schema
 ├── trader.py                   # Live trading state machine & WebSocket listener
 ├── server.py                   # FastAPI REST & WebSocket server
-├── screener.py                 # Exchange volume & spread screener
-├── data_collector.py           # Real-time WebSocket tick recorder
-├── run_backtest.py             # Multi-strategy benchmark runner
-├── test_microstructure.py      # Unit tests
 └── web/                        # Web Dashboard frontend
-    ├── index.html              # Modern dark-theme UI
-    ├── styles.css              # Cyberpunk/quant styling
+    ├── index.html              # High-contrast trading UI
+    ├── styles.css              # Modern light & dark theme styling
     └── app.js                  # WebSocket client & Chart.js logic
 ```
 
 ## License
 MIT License
+

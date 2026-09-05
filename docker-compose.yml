@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: polymarket_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-poly_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-poly_secret_password}
+      POSTGRES_DB: ${POSTGRES_DB:-polymarket_sim}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-poly_user} -d ${POSTGRES_DB:-polymarket_sim}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: polymarket_engine
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://poly_user:poly_secret_password@postgres:5432/polymarket_sim
+      - ASYNC_DATABASE_URL=postgresql+asyncpg://poly_user:poly_secret_password@postgres:5432/polymarket_sim
+      - INITIAL_CAPITAL=50.0
+      - ARB_SPREAD_THRESHOLD=0.015
+      - GAS_FEE_USD=0.005
+      - MAX_POSITION_PCT=0.50
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:

@@ -31,14 +31,14 @@ class ConfigRequest(BaseModel):
     beta_ofi: float = 0.7
     min_spread_bps: float = 2.0
     min_market_spread_bps: float = 4.5
-    max_inventory_usd: float = 25.0
+    max_inventory_usd: float = 30.0
     maker_fee_rate: float = 0.00015
     taker_fee_rate: float = 0.00045
     auto_rotate: bool = True
     rotation_interval_min: float = 15.0
     trades_target_per_pair: int = 12
     dynamic_sizing: bool = True
-    min_order_size_usd: float = 3.0
+    min_order_size_usd: float = 10.0
     mode: str = "SIMULATED"
 
 

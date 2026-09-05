@@ -30,14 +30,14 @@ class LiveHFTTrader:
         # Configurable Parameters ($50 Capital & $10 Sizing Scale)
         self.coin = "PONS"
         self.order_size_usd = 10.0        # Default max order size $10
-        self.min_order_size_usd = 3.0     # Minimum order size floor
+        self.min_order_size_usd = 10.0    # Hyperliquid minimum order size floor ($10.00 strictly enforced)
         self.dynamic_sizing = True        # Order book pressure & profit adaptive sizing
         self.gamma = 0.6
         self.kappa = 1.5
         self.beta_ofi = 0.7
         self.min_spread_bps = 2.0
         self.min_market_spread_bps = 4.5  # Gatekeeper: only quote when book spread >= 4.5 bps
-        self.max_inventory_usd = 25.0     # Max inventory $25 for $50 capital
+        self.max_inventory_usd = 30.0     # Max inventory $30 for $50 capital (supports 3 x $10 tranches)
         self.maker_fee_rate = 0.00015     # 0.015% Hyperliquid real base maker fee
         self.taker_fee_rate = 0.00045     # 0.045% Hyperliquid real base taker fee
         self.latency_ms = 10.0
@@ -113,16 +113,15 @@ class LiveHFTTrader:
             if self.status == "STOPPED" and self.fills_count == 0:
                 self.cash = self.initial_capital
                 self.pair_start_equity = self.initial_capital
-        self.order_size_usd = float(config.get("order_size_usd", self.order_size_usd))
-        if "min_order_size_usd" in config:
-            self.min_order_size_usd = float(config["min_order_size_usd"])
+        self.order_size_usd = max(10.0, float(config.get("order_size_usd", self.order_size_usd)))
+        self.min_order_size_usd = max(10.0, float(config.get("min_order_size_usd", self.min_order_size_usd)))
         if "dynamic_sizing" in config:
             self.dynamic_sizing = bool(config["dynamic_sizing"])
         self.gamma = float(config.get("gamma", self.gamma))
         self.beta_ofi = float(config.get("beta_ofi", self.beta_ofi))
         self.min_spread_bps = float(config.get("min_spread_bps", self.min_spread_bps))
         self.min_market_spread_bps = float(config.get("min_market_spread_bps", self.min_market_spread_bps))
-        self.max_inventory_usd = float(config.get("max_inventory_usd", self.max_inventory_usd))
+        self.max_inventory_usd = max(10.0, float(config.get("max_inventory_usd", self.max_inventory_usd)))
         self.maker_fee_rate = float(config.get("maker_fee_rate", self.maker_fee_rate))
         self.taker_fee_rate = float(config.get("taker_fee_rate", self.taker_fee_rate))
         self.mode = config.get("mode", self.mode)
@@ -820,11 +819,14 @@ class LiveHFTTrader:
             self.our_ask_usd = ask_usd
             self.our_quote_size = round((bid_qty + ask_qty) / 2.0, 4)
         else:
-            static_qty = round(self.order_size_usd / mid, 4)
+            static_usd = max(self.order_size_usd, self.min_order_size_usd, 10.0)
+            raw_static_qty = static_usd / mid
+            static_qty = math.ceil(raw_static_qty * 10000.0) / 10000.0
+            actual_usd = round(static_qty * mid, 2)
             self.our_bid_size = static_qty
             self.our_ask_size = static_qty
-            self.our_bid_usd = self.order_size_usd
-            self.our_ask_usd = self.order_size_usd
+            self.our_bid_usd = actual_usd
+            self.our_ask_usd = actual_usd
             self.our_quote_size = static_qty
 
         # If holding inventory, quote the exit side aggressively at the top of book to dump fast
@@ -837,9 +839,12 @@ class LiveHFTTrader:
             self.our_bid_size = round(abs(self.inventory), 4)
             self.our_bid_usd = round(abs_inv_usd, 2)
 
-        # Stage new quote with simulated latency
-        self.pending_bid = target_bid if (can_bid and self.our_bid_size > 0) else 0.0
-        self.pending_ask = target_ask if (can_ask and self.our_ask_size > 0) else float('inf')
+        # Stage new quote with simulated latency (strictly enforce >= min_order_size_usd)
+        can_quote_bid = can_bid and self.our_bid_size > 0 and (self.our_bid_usd >= self.min_order_size_usd or self.inventory < -1e-4)
+        can_quote_ask = can_ask and self.our_ask_size > 0 and (self.our_ask_usd >= self.min_order_size_usd or self.inventory > 1e-4)
+
+        self.pending_bid = target_bid if can_quote_bid else 0.0
+        self.pending_ask = target_ask if can_quote_ask else float('inf')
         self.pending_quote_time = now + (self.latency_ms / 1000.0)
 
         # Record equity progression (sample once every ~500ms)
@@ -890,6 +895,11 @@ class LiveHFTTrader:
                 fill_sz = min(ask_limit_sz, sz)
                 fill_px = self.active_ask
                 notional = fill_sz * fill_px
+
+                # Hyperliquid requires >= $10 notional per order. Avoid sub-$10 partials unless closing existing inventory
+                if notional < 10.0 and self.inventory <= 0:
+                    continue
+
                 fee = notional * self.maker_fee_rate
 
                 # Update entry price
@@ -951,6 +961,11 @@ class LiveHFTTrader:
                 fill_sz = min(bid_limit_sz, sz)
                 fill_px = self.active_bid
                 notional = fill_sz * fill_px
+
+                # Hyperliquid requires >= $10 notional per order. Avoid sub-$10 partials unless closing existing short position
+                if notional < 10.0 and self.inventory >= 0:
+                    continue
+
                 fee = notional * self.maker_fee_rate
 
                 # Update entry price

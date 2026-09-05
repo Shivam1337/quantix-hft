@@ -101,7 +101,7 @@
 
                 <div class="form-group">
                     <label>Max Quote Size ($ Max per Side)</label>
-                    <input type="number" id="order-size-input" class="form-control" value="10" min="5" max="100" step="5">
+                    <input type="number" id="order-size-input" class="form-control" value="10" min="10" max="100" step="5">
                 </div>
 
                 <div class="form-group">
@@ -109,7 +109,7 @@
                         <label for="dynamic-sizing-toggle" style="margin-bottom: 0; cursor: pointer;">Adaptive Dynamic Sizing</label>
                         <input type="checkbox" id="dynamic-sizing-toggle" checked style="width: 18px; height: 18px; cursor: pointer;">
                     </div>
-                    <span class="slider-hint">Scales quote sizes between $3.00 & max size based on book pressure and profits</span>
+                    <span class="slider-hint">Scales quote sizes dynamically (&ge; $10.00 min notional required by Hyperliquid)</span>
                 </div>
 
                 <div class="form-group">
@@ -150,7 +150,7 @@
 
                 <div class="form-group">
                     <label>Max Inventory ($ USD Limit)</label>
-                    <input type="number" id="max-inv-input" class="form-control" value="25" min="10" max="100" step="5">
+                    <input type="number" id="max-inv-input" class="form-control" value="30" min="10" max="100" step="10">
                 </div>
 
                 <div class="fee-info-box">

@@ -284,6 +284,7 @@ class AvellanedaStoikovModel:
         1. Profit momentum: Scaling up when pair is profitable, contracting in drawdowns.
         2. Order book pressure: Positive OFI / bid depth expands bid & shrinks ask; negative OFI expands ask & shrinks bid.
         3. Inventory headroom: Strictly clamps sizes so fills cannot breach max inventory.
+        4. Hyperliquid notional rule: Strict $10.00 USD minimum per order.
 
         Returns:
             (bid_qty, ask_qty, bid_usd, ask_usd)
@@ -291,7 +292,11 @@ class AvellanedaStoikovModel:
         if mid_price <= 0:
             return 0.0, 0.0, 0.0, 0.0
 
-        # Baseline notional size (70% of max size)
+        # Hyperliquid strictly enforces >= $10.00 USD notional per order
+        min_order_size_usd = max(float(min_order_size_usd), 10.0)
+        max_order_size_usd = max(float(max_order_size_usd), min_order_size_usd)
+
+        # Baseline notional size (70% of max size, at least min_order_size_usd)
         base_size = max(max_order_size_usd * 0.70, min_order_size_usd)
 
         # 1. Profit Momentum Multiplier
@@ -324,17 +329,35 @@ class AvellanedaStoikovModel:
         ask_usd = float(np.clip(raw_ask_usd, min_order_size_usd, max_order_size_usd))
 
         # 3. Inventory Headroom Clamping
-        # If long inventory is close to max, bid must not exceed remaining room
+        # If remaining long room is less than min_order_size_usd ($10), we cannot place a valid quote without breaching max inventory
         room_long = max(0.0, max_inventory_usd - inventory_usd)
-        if bid_usd > room_long:
-            bid_usd = max(room_long, 0.0)
+        if room_long < min_order_size_usd:
+            bid_usd = 0.0
+        elif bid_usd > room_long:
+            bid_usd = room_long if room_long >= min_order_size_usd else 0.0
 
-        # If short inventory is close to -max, ask must not exceed remaining short room
+        # If remaining short room is less than min_order_size_usd ($10), we cannot place a valid quote without breaching max short inventory
         room_short = max(0.0, max_inventory_usd + inventory_usd)
-        if ask_usd > room_short:
-            ask_usd = max(room_short, 0.0)
+        if room_short < min_order_size_usd:
+            ask_usd = 0.0
+        elif ask_usd > room_short:
+            ask_usd = room_short if room_short >= min_order_size_usd else 0.0
 
-        bid_qty = round(bid_usd / mid_price, 4) if bid_usd >= min_order_size_usd else 0.0
-        ask_qty = round(ask_usd / mid_price, 4) if ask_usd >= min_order_size_usd else 0.0
+        # Calculate quantities ensuring notional (qty * mid_price) is strictly >= min_order_size_usd
+        if bid_usd >= min_order_size_usd:
+            raw_bid_qty = bid_usd / mid_price
+            bid_qty = math.ceil(raw_bid_qty * 10000.0) / 10000.0
+            bid_usd = round(bid_qty * mid_price, 2)
+        else:
+            bid_qty = 0.0
+            bid_usd = 0.0
 
-        return bid_qty, ask_qty, round(bid_usd, 2), round(ask_usd, 2)
+        if ask_usd >= min_order_size_usd:
+            raw_ask_qty = ask_usd / mid_price
+            ask_qty = math.ceil(raw_ask_qty * 10000.0) / 10000.0
+            ask_usd = round(ask_qty * mid_price, 2)
+        else:
+            ask_qty = 0.0
+            ask_usd = 0.0
+
+        return bid_qty, ask_qty, bid_usd, ask_usd

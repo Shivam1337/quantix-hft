@@ -349,13 +349,14 @@ document.addEventListener("DOMContentLoaded", () => {
         const payload = {
             coin: coinSelect.value,
             initial_capital: 50.0,
-            order_size_usd: parseFloat(orderSizeInput.value),
+            order_size_usd: Math.max(10.0, parseFloat(orderSizeInput.value) || 10.0),
+            min_order_size_usd: 10.0,
             dynamic_sizing: dynamicSizingToggle ? dynamicSizingToggle.checked : true,
             gamma: parseFloat(gammaInput.value),
             beta_ofi: parseFloat(betaInput.value),
             min_spread_bps: parseFloat(spreadInput.value),
             min_market_spread_bps: marketSpreadInput ? parseFloat(marketSpreadInput.value) : 4.5,
-            max_inventory_usd: parseFloat(maxInvInput.value),
+            max_inventory_usd: Math.max(10.0, parseFloat(maxInvInput.value) || 30.0),
             auto_rotate: autoRotateToggle ? autoRotateToggle.checked : true,
             rotation_interval_min: 15.0,
             mode: "SIMULATED"

@@ -33,13 +33,14 @@ from app.core.execution import (
     calculate_executable_order,
     calculate_profitable_price_limit,
 )
+from app.core.execution.telemetry import ExecutionTelemetryMixin
 from app.core.live_execution import LiveExecutionMixin
 from app.core.performance_metrics import build_performance
 from app.core.settings_manager import settings_manager
 from app.core.wallet_manager import wallet_manager
 
 
-class SniperEngine(LiveExecutionMixin):
+class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
     def __init__(self):
         self.min_lag_trigger = MIN_LAG_TRIGGER
         self.min_entry_velocity = MIN_ENTRY_VELOCITY_USD
@@ -62,6 +63,7 @@ class SniperEngine(LiveExecutionMixin):
         self.active_trade: Optional[Dict[str, Any]] = None
         self.closed_trades: collections.deque = collections.deque(maxlen=MAX_CLOSED_TRADES_HISTORY)
         self._init_live_execution()
+        self._init_execution_telemetry()
 
         self.current_decision: Dict[str, Any] = {
             "stance": "MONITORING",
@@ -712,6 +714,7 @@ class SniperEngine(LiveExecutionMixin):
                 "tx_hash": None,
             }
             if is_real:
+                self._begin_execution_telemetry(self.active_trade, lighter_state)
                 self._fire_live_open(self.active_trade)
 
             self.current_decision = {
@@ -830,6 +833,7 @@ class SniperEngine(LiveExecutionMixin):
                 "tx_hash": None,
             }
             if is_real:
+                self._begin_execution_telemetry(self.active_trade, lighter_state)
                 self._fire_live_open(self.active_trade)
 
             self.current_decision = {
@@ -912,6 +916,7 @@ class SniperEngine(LiveExecutionMixin):
             "decision": self.current_decision,
             "active_position": self.active_trade,
             "closed_trades": list(self.closed_trades),
+            "execution_attempts": self.get_execution_attempts(),
             "performance": self.get_performance(),
             "trading_mode": settings_manager.trading_mode,
             "is_real_mode": settings_manager.is_real_mode,

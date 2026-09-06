@@ -97,6 +97,13 @@ class StateManager:
         self.hl = self._new_venue_state("BTC-PERP (Hyperliquid)", FEES["hyperliquid"]["label"])
         self.lighter = self._new_venue_state("BTC Perp (Lighter.xyz)", FEES["lighter"]["label"], include_lag=True)
         self.poly = self._new_venue_state("BTC-USD (Polymarket)", FEES["polymarket"]["label"], include_lag=True)
+        self.sniper_engine.configure_execution_telemetry(
+            book_snapshot_provider=lambda: self.lighter,
+            attempt_sink=lambda attempt: self.persistence.record_event({
+                "transition": "EXECUTION_ATTEMPT",
+                "event": attempt,
+            }),
+        )
 
     @staticmethod
     def _new_venue_state(symbol: str, fees: str, *, include_lag: bool = False) -> Dict[str, Any]:
@@ -515,6 +522,7 @@ class StateManager:
             if isinstance(trade, dict) and isinstance(trade.get("id"), int)
         }
         self.lead_lag_analyzer.hydrate_repricing_events(snapshot.get("repricing_events", []))
+        self.sniper_engine.hydrate_execution_attempts(snapshot.get("execution_attempts", []))
         await self._sync_settings_and_wallet_with_db()
 
     async def _sync_settings_and_wallet_with_db(self) -> None:
@@ -637,6 +645,7 @@ class StateManager:
             "trading_performance": sniper_data["performance"],
             "trading_enabled": sniper_data["trading_enabled"],
             "recent_trades": sniper_data["closed_trades"][:10],
+            "recent_execution_attempts": sniper_data["execution_attempts"][:20],
             "lead_lag_analytics": analysis,
             "recent_repricing_events": self.lead_lag_analyzer.get_repricing_events()[:10],
             "provider_insights": self.get_provider_insights(now_monotonic_ns=now_monotonic_ns),

@@ -265,7 +265,12 @@ class PostgresStore:
 
     @staticmethod
     def _empty_snapshot() -> Dict[str, List[Dict[str, Any]]]:
-        return {"chart_samples": [], "closed_trades": [], "repricing_events": []}
+        return {
+            "chart_samples": [],
+            "closed_trades": [],
+            "repricing_events": [],
+            "execution_attempts": [],
+        }
 
     async def load_recent(
         self,
@@ -301,6 +306,16 @@ class PostgresStore:
                 """,
                 event_limit,
             )
+            attempt_rows = await connection.fetch(
+                """
+                SELECT payload::text AS payload
+                FROM lead_lag_events
+                WHERE event_type = 'EXECUTION_ATTEMPT'
+                ORDER BY id DESC
+                LIMIT $1
+                """,
+                trade_limit,
+            )
 
         trades = [payload for row in trade_rows if (payload := self._decode_payload(row["payload"]))]
         samples = [payload for row in reversed(chart_rows) if (payload := self._decode_payload(row["payload"]))]
@@ -310,7 +325,18 @@ class PostgresStore:
             event = payload.get("event") if payload else None
             if isinstance(event, dict):
                 events.append(event)
-        return {"chart_samples": samples, "closed_trades": trades, "repricing_events": events}
+        attempts = []
+        for row in attempt_rows:
+            payload = self._decode_payload(row["payload"])
+            attempt = payload.get("event") if payload else None
+            if isinstance(attempt, dict):
+                attempts.append(attempt)
+        return {
+            "chart_samples": samples,
+            "closed_trades": trades,
+            "repricing_events": events,
+            "execution_attempts": attempts,
+        }
 
 
     def record_chart_sample(self, sample: Dict[str, Any]) -> None:
@@ -582,6 +608,5 @@ class PostgresStore:
             if row:
                 return self._decode_payload(row["payload"])
             return None
-
 
 

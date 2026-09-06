@@ -38,6 +38,13 @@ async def get_trades_history():
     return {"total_closed": len(summary["closed_trades"]), "trades": summary["closed_trades"]}
 
 
+@router.get("/execution-attempts", summary="Query recent live-order telemetry")
+async def get_execution_attempts():
+    """Returns bounded per-order L2, timing, and Lighter terminal-result evidence."""
+    attempts = state_manager.sniper_engine.get_execution_attempts()
+    return {"total_attempts": len(attempts), "attempts": attempts}
+
+
 @router.get("/performance", summary="Query cumulative trading performance")
 async def get_trading_performance():
     """

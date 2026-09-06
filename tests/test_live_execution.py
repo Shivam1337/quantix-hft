@@ -96,6 +96,14 @@ class FakeLighterClient:
         return LighterOrderOutcome(client_order_index, "filled", 0.05, 5.5, 110.0, time.time())
 
 
+class UnknownOutcomeClient:
+    async def open_snipe_order(self, **_kwargs):
+        return True, "entry-tx", None
+
+    async def wait_for_order_outcome(self, **_kwargs):
+        return None
+
+
 class LiveExecutionLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.original_settings = copy.deepcopy(settings_manager._settings)
@@ -211,6 +219,24 @@ class LiveExecutionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         engine._fire_live_close(short_trade, 80000.0, "TIMEOUT")
         self.assertEqual(80004.5, short_trade["exit_limit_px"])
         self.assertEqual(80000.0, short_trade["exit_requested_px"])
+
+    async def test_unresolved_entry_quarantines_live_execution_after_bounded_retries(self):
+        engine = SniperEngine()
+        with (
+            patch("app.core.lighter_client.lighter_client", UnknownOutcomeClient()),
+            patch("app.core.live_execution.RECONCILIATION_WINDOW_SECONDS", 0.0),
+            patch("app.core.live_execution.RECONCILIATION_RETRY_SECONDS", 0.0),
+        ):
+            engine.process_tick(
+                self._book(), "Binance", 110.0, 110.0, 10.0,
+                "HIGH_CONVICTION", "Major venues agree.",
+            )
+            for _ in range(8):
+                await asyncio.sleep(0)
+
+        self.assertIsNotNone(engine.active_trade)
+        self.assertEqual("ENTRY_UNKNOWN", engine.active_trade["execution_state"])
+        self.assertIn("LIVE_ORDER_STATE_UNKNOWN", engine.live_entry_block_reason)
 
 
 class SimulationProfitRegressionTests(unittest.TestCase):

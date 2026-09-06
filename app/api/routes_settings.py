@@ -22,6 +22,7 @@ class UpdateSettingsRequest(BaseModel):
     trade_margin_fraction: Optional[float] = None
     leverage: Optional[float] = None
     min_lag_trigger: Optional[float] = None
+    minimum_net_profit_usd: Optional[float] = None
     max_hold_seconds: Optional[float] = None
     stop_loss_drawdown: Optional[float] = None
     simulation_starting_balance: Optional[float] = None

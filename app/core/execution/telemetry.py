@@ -60,6 +60,16 @@ class ExecutionTelemetryMixin:
         self._execution_book_snapshot_provider = book_snapshot_provider
         self._execution_attempt_sink = attempt_sink
 
+    def _get_execution_book_state(self) -> tuple[Optional[Mapping[str, Any]], Optional[str]]:
+        """Read the latest execution book without letting diagnostics affect trading."""
+        if self._execution_book_snapshot_provider is None:
+            return None, None
+        try:
+            state = self._execution_book_snapshot_provider()
+            return (state if isinstance(state, Mapping) else None), None
+        except Exception as exc:
+            return None, str(exc)
+
     def hydrate_execution_attempts(self, attempts: Any) -> None:
         self.execution_attempts.clear()
         if isinstance(attempts, list):
@@ -70,6 +80,9 @@ class ExecutionTelemetryMixin:
                 for item in attempts[:MAX_EXECUTION_ATTEMPTS_HISTORY]
                 if isinstance(item, dict)
             )
+        guard = getattr(self, "execution_latency_guard", None)
+        if guard is not None:
+            guard.hydrate_attempts(self.execution_attempts)
 
     def get_execution_attempts(self) -> list[Dict[str, Any]]:
         return copy.deepcopy(list(self.execution_attempts))
@@ -90,15 +103,10 @@ class ExecutionTelemetryMixin:
             "orders": {},
         }
 
-    def _capture_order_submission(self, trade: Dict[str, Any], phase: str, submitted_at: float) -> None:
-        state: Optional[Mapping[str, Any]] = None
-        capture_error = None
-        if self._execution_book_snapshot_provider is not None:
-            try:
-                state = self._execution_book_snapshot_provider()
-            except Exception as exc:  # Telemetry must never interrupt live risk handling.
-                capture_error = str(exc)
+    def _capture_order_submission(self, trade: Dict[str, Any], phase: str, submitted_at: float) -> Dict[str, Any]:
+        state, capture_error = self._get_execution_book_state()
         order = self._order_section(trade, phase)
+        book = capture_lighter_book(state, captured_epoch=submitted_at)
         order.update({
             "submitted_at_utc": _utc(submitted_at),
             "side": trade.get("side"),
@@ -109,10 +117,11 @@ class ExecutionTelemetryMixin:
                 else (trade.get("exit_limit_px") or trade.get("exit_requested_px"))
             ),
             "reduce_only": phase == "EXIT",
-            "lighter_book": capture_lighter_book(state, captured_epoch=submitted_at),
+            "lighter_book": book,
         })
         if capture_error:
             order["book_capture_error"] = capture_error
+        return book
 
     def _record_order_acknowledgement(
         self,
@@ -120,11 +129,24 @@ class ExecutionTelemetryMixin:
         phase: str,
         acknowledged_at: float,
         tx_hash: Optional[str],
+        receipt: Any = None,
     ) -> None:
-        self._order_section(trade, phase).update({
+        state, capture_error = self._get_execution_book_state()
+        acknowledgement = {
             "acknowledged_at_utc": _utc(acknowledged_at),
             "transaction_hash": tx_hash,
-        })
+            "acknowledgement_book": capture_lighter_book(state, captured_epoch=acknowledged_at),
+        }
+        if receipt is not None:
+            acknowledgement["response"] = {
+                "code": getattr(receipt, "response_code", None),
+                "message": getattr(receipt, "response_message", None),
+                "predicted_execution_time_ms": getattr(receipt, "predicted_execution_time_ms", None),
+                "volume_quota_remaining": getattr(receipt, "volume_quota_remaining", None),
+            }
+        if capture_error:
+            acknowledgement["book_capture_error"] = capture_error
+        self._order_section(trade, phase).update(acknowledgement)
 
     def _record_execution_terminal(
         self,
@@ -179,19 +201,20 @@ class ExecutionTelemetryMixin:
         telemetry = trade.setdefault("execution_telemetry", {"schema_version": 1, "signal": None, "orders": {}})
         return telemetry.setdefault("orders", {}).setdefault(phase.lower(), {})
 
-
 def _client_order_index(trade: Mapping[str, Any], phase: str) -> Optional[int]:
+    journal_key = "entry_client_order_index" if phase == "ENTRY" else "exit_client_order_index"
+    journal_index = _integer(trade.get(journal_key))
+    if journal_index is not None:
+        return journal_index
     trade_id = _integer(trade.get("id"))
     if trade_id is None:
         return None
     return trade_id if phase == "ENTRY" else trade_id + 10_000
 
-
 def _record_latency(trade: Dict[str, Any], name: str, start: Any, end: float) -> None:
     start_time = _number(start)
     if start_time is not None:
         trade.setdefault("latencies_ms", {})[name] = round(max(0.0, end - start_time) * 1000, 2)
-
 
 def _levels(raw_levels: Any) -> list[Dict[str, Optional[float]]]:
     if not isinstance(raw_levels, (list, tuple)):

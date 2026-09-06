@@ -44,7 +44,9 @@ REVERSAL_INVALIDATION = 4.0   # If leader moves $4 back past entry, signal was a
 # A ladder may consume a few immediate L2 levels, but must retain a positive
 # expected edge beyond the conservative target-exit threshold.
 TARGET_EXIT_BUFFER_USD = max(0.0, float(os.getenv("TARGET_EXIT_BUFFER_USD", "1.0")))
-LADDER_MIN_EXPECTED_PROFIT_USD = max(0.1, float(os.getenv("LADDER_MIN_EXPECTED_PROFIT_USD", "1.0")))
+# This is an actual USD net-profit floor, not a BTC price offset.  At the
+# default 8 USD stop and a 0.00153 BTC fill, 2.5 cents is roughly a 2R floor.
+LADDER_MIN_EXPECTED_PROFIT_USD = max(0.01, float(os.getenv("LADDER_MIN_EXPECTED_PROFIT_USD", "0.025")))
 MAX_EXECUTION_BOOK_LEVELS = max(1, min(3, int(os.getenv("MAX_EXECUTION_BOOK_LEVELS", "3"))))
 # Consume only this fraction of each profitable L2 level and of the configured
 # notional cap. This leaves visible depth for normal book churn while retaining
@@ -58,6 +60,18 @@ EXECUTION_LIQUIDITY_PARTICIPATION = min(
 EXECUTION_SLIPPAGE_BUFFER_USD = max(
     0.0,
     float(os.getenv("EXECUTION_SLIPPAGE_BUFFER_USD", "3.0")),
+)
+# Lighter API acknowledgement has a known 300 ms floor.  The live guard uses
+# this floor or a worse observed tail, and stands down when that tail grows too
+# slow for a short-lived lead-lag signal.
+LIGHTER_MINIMUM_ARRIVAL_MS = max(300.0, float(os.getenv("LIGHTER_MINIMUM_ARRIVAL_MS", "300")))
+LIGHTER_MAXIMUM_ARRIVAL_MS = max(
+    LIGHTER_MINIMUM_ARRIVAL_MS,
+    float(os.getenv("LIGHTER_MAXIMUM_ARRIVAL_MS", "1500")),
+)
+LIGHTER_MAX_EXECUTION_BOOK_AGE_MS = max(
+    1.0,
+    float(os.getenv("LIGHTER_MAX_EXECUTION_BOOK_AGE_MS", "250")),
 )
 
 # Capital Management & Leverage Parameters

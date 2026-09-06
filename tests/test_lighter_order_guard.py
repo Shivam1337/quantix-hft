@@ -5,7 +5,11 @@ from app.core.lighter_client import LighterClient
 
 
 class FakeResponse:
+    code = 200
+    message = "accepted"
     tx_hash = "test-tx"
+    predicted_execution_time_ms = 300
+    volume_quota_remaining = 1
 
 
 class FakeSigner:

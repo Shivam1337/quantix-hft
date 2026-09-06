@@ -70,9 +70,9 @@ class SniperLiquidityIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(0.18, trade["size_btc"])
         self.assertAlmostEqual(18.02, trade["notional_usd"])
         self.assertEqual(2500.0, trade["requested_notional_usd"])
-        self.assertEqual(103.2, trade["execution_price_limit"])
+        self.assertEqual(100.2, trade["execution_price_limit"])
         self.assertEqual(100.2, trade["ladder_price_limit"])
-        self.assertEqual(108.0, trade["profitability_limit_price"])
+        self.assertEqual(108.8, trade["profitability_limit_price"])
         self.assertEqual(3, trade["book_levels_used"])
         self.assertAlmostEqual(100.11111111, trade["entry_px"])
 
@@ -104,9 +104,9 @@ class SniperLiquidityIntegrationTests(unittest.TestCase):
         self.assertEqual("SHORT", trade["side"])
         self.assertAlmostEqual(0.18, trade["size_btc"])
         self.assertAlmostEqual(17.98, trade["notional_usd"])
-        self.assertEqual(96.8, trade["execution_price_limit"])
+        self.assertEqual(99.8, trade["execution_price_limit"])
         self.assertEqual(99.8, trade["ladder_price_limit"])
-        self.assertEqual(92.0, trade["profitability_limit_price"])
+        self.assertEqual(91.2, trade["profitability_limit_price"])
         self.assertEqual(3, trade["book_levels_used"])
         self.assertAlmostEqual(99.88888889, trade["entry_px"])
 
@@ -140,7 +140,7 @@ class SniperLiquidityIntegrationTests(unittest.TestCase):
                 "best_ask": 100.0,
                 "mid_price": 99.95,
                 "bids": [["99.9", "3.0"]],
-                "asks": [["100.0", "0.05000"], ["108.1", "3.00000"]],
+                "asks": [["100.0", "0.05000"], ["109.0", "3.00000"]],
             },
             "Binance",
             110.0,

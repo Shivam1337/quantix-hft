@@ -25,6 +25,7 @@ from app.config import (
     STALE_FEED_SECONDS,
 )
 from app.core.lead_lag_analyzer import LeadLagAnalyzer
+from app.core.execution.order_journal import OrderJournal
 from app.core.postgres_store import PostgresStore
 from app.core.resource_monitor import ResourceMonitor
 from app.core.sniper_engine import SniperEngine
@@ -80,6 +81,11 @@ class StateManager:
         self.last_recalculated_at: Optional[str] = None
         self.lead_lag_analyzer = LeadLagAnalyzer()
         self.sniper_engine = SniperEngine()
+        self.order_journal = OrderJournal.durable_default()
+        self.sniper_engine.configure_order_journal(self.order_journal)
+        if not self.order_journal.is_durable:
+            self.sniper_engine._block_new_live_entries("DURABLE_ORDER_JOURNAL_UNAVAILABLE")
+            logger.error("Blocked REAL/DUAL entries because ORDER_JOURNAL_DB_PATH is not durable.")
         self.persistence = persistence or PostgresStore()
         self.resource_monitor = ResourceMonitor()
         self.sse_clients: Set[asyncio.Queue] = set()
@@ -570,6 +576,12 @@ class StateManager:
             self._logged_execution_comparison_signatures.setdefault(
                 comparison_id, f"{comparison.get('status')}:{comparison.get('updated_at')}"
             )
+        unresolved_orders = await self.sniper_engine.recover_unresolved_live_orders()
+        if unresolved_orders:
+            logger.error(
+                "Blocked new REAL/DUAL entries because %s durable Lighter order(s) need reconciliation.",
+                len(unresolved_orders),
+            )
         await self._sync_settings_and_wallet_with_db()
 
     async def _sync_settings_and_wallet_with_db(self) -> None:
@@ -852,6 +864,12 @@ class StateManager:
             "feed_ages_ms": feed_ages_ms,
             "stale_feeds": stale_feeds,
             "persistence": self.get_persistence_status(),
+            "execution_safety": {
+                "new_real_entries_blocked": bool(self.sniper_engine.live_entry_block_reason),
+                "block_reason": self.sniper_engine.live_entry_block_reason,
+                "arrival_budget_ms": self.sniper_engine.execution_latency_guard.arrival_budget_ms,
+                "adverse_quote_buffer_usd": self.sniper_engine.execution_latency_guard.adverse_quote_buffer_usd,
+            },
             "resources": self.get_resource_usage(),
         }
 

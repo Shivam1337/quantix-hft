@@ -10,7 +10,7 @@ import asyncio
 import sqlite3
 from typing import Dict, Any, Tuple, Optional
 from app.core.wallet_manager import wallet_manager
-from app.config import SQLITE_DB_PATH
+from app.config import LADDER_MIN_EXPECTED_PROFIT_USD, SQLITE_DB_PATH
 
 logger = logging.getLogger("settings_manager")
 
@@ -28,6 +28,7 @@ class SettingsManager:
         "trade_margin_fraction": 0.50,
         "leverage": 50.0,
         "min_lag_trigger": 6.00,
+        "minimum_net_profit_usd": LADDER_MIN_EXPECTED_PROFIT_USD,
         "max_hold_seconds": 12.0,
         "stop_loss_drawdown": 8.0,
         "simulation_starting_balance": 100.0,
@@ -218,6 +219,18 @@ class SettingsManager:
         return float(self._settings.get("min_lag_trigger", 6.00))
 
     @property
+    def minimum_net_profit_usd(self) -> float:
+        return max(0.01, float(self._settings.get("minimum_net_profit_usd", LADDER_MIN_EXPECTED_PROFIT_USD)))
+
+    @property
+    def max_hold_seconds(self) -> float:
+        return max(0.1, float(self._settings.get("max_hold_seconds", 12.0)))
+
+    @property
+    def stop_loss_drawdown(self) -> float:
+        return max(0.1, float(self._settings.get("stop_loss_drawdown", 8.0)))
+
+    @property
     def simulation_starting_balance(self) -> float:
         try:
             return float(self._settings.get("simulation_starting_balance", 100.0))
@@ -274,6 +287,7 @@ class SettingsManager:
             "trade_margin_fraction",
             "leverage",
             "min_lag_trigger",
+            "minimum_net_profit_usd",
             "max_hold_seconds",
             "stop_loss_drawdown",
             "simulation_starting_balance",
@@ -312,8 +326,9 @@ class SettingsManager:
             "trade_margin_fraction": self.trade_margin_fraction,
             "leverage": self.leverage,
             "min_lag_trigger": self.min_lag_trigger,
-            "max_hold_seconds": float(self._settings.get("max_hold_seconds", 12.0)),
-            "stop_loss_drawdown": float(self._settings.get("stop_loss_drawdown", 8.0)),
+            "minimum_net_profit_usd": self.minimum_net_profit_usd,
+            "max_hold_seconds": self.max_hold_seconds,
+            "stop_loss_drawdown": self.stop_loss_drawdown,
             "simulation_starting_balance": self.simulation_starting_balance,
             "is_real_eligible": eligible,
             "eligibility_message": reason,

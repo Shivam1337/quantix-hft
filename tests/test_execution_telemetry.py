@@ -91,7 +91,7 @@ class CanceledEntryTelemetryTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("app.core.lighter_client.lighter_client", _CanceledEntryClient()):
             engine.process_tick(
-                current_book, "Binance", 110.0, 110.0, 10.0,
+                current_book, "Binance", 120.0, 120.0, 10.0,
                 "HIGH_CONVICTION", "Major venues agree.",
             )
             for _ in range(3):

@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict
 
+from app.core.execution.submission import coerce_submission_receipt
 from app.core.lighter_order_reconciliation import LighterOrderOutcome
 
 
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 RECONCILIATION_WINDOW_SECONDS = 2.0
 RECONCILIATION_RETRY_SECONDS = 0.25
+RECONCILIATION_MAX_ATTEMPTS = 3
 BTC_PRECISION_EPSILON = 0.000005
 
 
@@ -44,28 +46,56 @@ class LiveExitExecutionMixin:
         self._record_latency(trade, "fill_to_exit_submit", trade.get("entry_fill_observed_ts"), submitted_at)
         self._capture_order_submission(trade, "EXIT", submitted_at)
         exit_limit = trade.get("exit_limit_px", trade["exit_requested_px"])
-        success, tx_hash, error = await lighter_client.close_snipe_order(
+        client_order_index, journal_error = await self._reserve_order_intent(trade, "EXIT", submitted_at)
+        if journal_error or client_order_index is None:
+            trade.update({"exit_order_error": journal_error or "ORDER_JOURNAL_INTENT_FAILED", "execution_state": "OPEN"})
+            self._record_dual_exit_failure(trade, trade["exit_order_error"])
+            self._record_execution_terminal(trade, phase="EXIT", result="EXIT_SUBMISSION_FAILED", observed_at=time.time(), error=trade["exit_order_error"])
+            return
+        receipt = coerce_submission_receipt(await lighter_client.close_snipe_order(
             side=trade["side"], size_btc=trade["size_btc"],
-            limit_price=exit_limit, trade_id=trade["id"],
-        )
+            limit_price=exit_limit, trade_id=trade["id"], client_order_index=client_order_index,
+        ))
         acknowledged_at = time.time()
-        if not success:
-            trade.update({"exit_order_error": error, "execution_state": "OPEN"})
-            self._record_dual_exit_failure(trade, error)
+        if not receipt.success:
+            if receipt.uncertain:
+                await self._quarantine_unknown_order(trade, "EXIT", receipt.error or "Uncertain Lighter exit submission outcome.")
+                self._record_dual_exit_failure(trade, receipt.error)
+                self._record_execution_terminal(trade, phase="EXIT", result="EXIT_UNKNOWN", observed_at=acknowledged_at, error=receipt.error)
+                return
+            journal_error = await self._record_order_terminal(
+                client_order_index, terminal_status="SUBMISSION_FAILED", error=receipt.error,
+            )
+            if journal_error:
+                await self._quarantine_unknown_order(trade, "EXIT", journal_error)
+                self._record_dual_exit_failure(trade, journal_error)
+                self._record_execution_terminal(trade, phase="EXIT", result="EXIT_UNKNOWN", observed_at=acknowledged_at, error=journal_error)
+                return
+            trade.update({"exit_order_error": receipt.error, "execution_state": "OPEN"})
+            self._record_dual_exit_failure(trade, receipt.error)
             self._record_execution_terminal(
-                trade, phase="EXIT", result="EXIT_SUBMISSION_FAILED", observed_at=acknowledged_at, error=error,
+                trade, phase="EXIT", result="EXIT_SUBMISSION_FAILED", observed_at=acknowledged_at, error=receipt.error,
             )
             return
-        trade.update({"exit_tx_hash": tx_hash, "exit_ack_ts": acknowledged_at, "execution_state": "EXIT_RECONCILING"})
+        journal_error = await self._acknowledge_order_intent(client_order_index, receipt)
+        if journal_error:
+            await self._quarantine_unknown_order(trade, "EXIT", journal_error)
+            self._record_dual_exit_failure(trade, journal_error)
+            self._record_execution_terminal(trade, phase="EXIT", result="EXIT_UNKNOWN", observed_at=acknowledged_at, error=journal_error)
+            return
+        trade.update({"exit_tx_hash": receipt.tx_hash, "exit_ack_ts": acknowledged_at, "execution_state": "EXIT_RECONCILING"})
         self._record_latency(trade, "exit_submit_to_ack", submitted_at, acknowledged_at)
-        self._record_order_acknowledgement(trade, "EXIT", acknowledged_at, tx_hash)
+        self._record_order_acknowledgement(trade, "EXIT", acknowledged_at, receipt.tx_hash, receipt)
+        self._record_arrival_ack(trade, "EXIT")
         await self._reconcile_exit(trade, lighter_client)
 
     async def _reconcile_exit(self, trade: Dict[str, Any], client: Any) -> None:
-        while self.active_trade is trade:
+        for attempt in range(RECONCILIATION_MAX_ATTEMPTS):
+            if self.active_trade is not trade:
+                return
             try:
                 outcome = await client.wait_for_order_outcome(
-                    client_order_index=trade["id"] + 10_000,
+                    client_order_index=trade.get("exit_client_order_index", trade["id"] + 10_000),
                     submitted_at=trade.get("exit_submit_ts"),
                     timeout_seconds=RECONCILIATION_WINDOW_SECONDS,
                 )
@@ -74,9 +104,32 @@ class LiveExitExecutionMixin:
                 outcome = None
             if outcome is None:
                 trade["execution_state"] = "EXIT_RECONCILIATION_PENDING"
+                if attempt + 1 >= RECONCILIATION_MAX_ATTEMPTS:
+                    error = trade.get("exit_reconciliation_error", "Lighter exit outcome did not arrive within the bounded window.")
+                    await self._quarantine_unknown_order(trade, "EXIT", str(error))
+                    self._record_dual_exit_failure(trade, str(error))
+                    self._record_execution_terminal(trade, phase="EXIT", result="EXIT_UNKNOWN", error=str(error))
+                    return
                 await asyncio.sleep(RECONCILIATION_RETRY_SECONDS)
                 continue
+            journal_error = await self._record_order_terminal(
+                int(trade.get("exit_client_order_index", trade["id"] + 10_000)), terminal_status=outcome.status,
+            )
+            if journal_error:
+                await self._quarantine_unknown_order(trade, "EXIT", journal_error)
+                self._record_dual_exit_failure(trade, journal_error)
+                self._record_execution_terminal(trade, phase="EXIT", result="EXIT_UNKNOWN", error=journal_error)
+                return
             self._apply_exit_fill(trade, outcome)
+            if self.active_trade is not trade:
+                entry_index = int(trade.get("entry_client_order_index", trade["id"]))
+                journal_error = await self._record_order_terminal(
+                    entry_index, terminal_status="POSITION_CLOSED",
+                )
+                if journal_error:
+                    self._block_new_live_entries(
+                        f"LIVE_ORDER_STATE_UNKNOWN: closed exit could not finalize entry journal ({journal_error})"
+                    )
             return
 
     def _apply_exit_fill(self, trade: Dict[str, Any], outcome: LighterOrderOutcome) -> None:

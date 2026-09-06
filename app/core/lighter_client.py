@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Optional, Tuple, Dict, Any
 import lighter
 from app.core.execution import MIN_EXECUTABLE_NOTIONAL_USD, MIN_EXECUTABLE_SIZE_BTC
+from app.core.execution.submission import LighterSubmissionReceipt
 from app.core.lighter_order_reconciliation import LighterOrderOutcome, LighterOrderReconciler
 from app.core.settings_manager import settings_manager
 
@@ -92,29 +93,31 @@ class LighterClient:
         size_btc: float,
         limit_price: float,
         trade_id: int,
-    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        client_order_index: Optional[int] = None,
+    ) -> LighterSubmissionReceipt:
         """
         Executes a live market IOC snipe order bounded by the displayed-price limit.
-        Returns: (success: bool, tx_hash: Optional[str], error_message: Optional[str])
+        A valid Lighter ``RespSendTx`` code and transaction hash are required
+        before reconciliation can begin.
         """
         async with self._lock:
             # Re-check after waiting for the submission lock.  This prevents an
             # entry queued behind another order from crossing the pause boundary.
             if not settings_manager.trading_enabled:
-                return False, None, "Global trading activity is paused; live entry was not submitted."
+                return LighterSubmissionReceipt.failure("Global trading activity is paused; live entry was not submitted.")
             signer = self._get_signer()
             if not signer:
-                return False, None, "SignerClient not initialized: check account index and API key."
+                return LighterSubmissionReceipt.failure("SignerClient not initialized: check account index and API key.")
 
             is_ask = (side.upper() == "SHORT")
             base_amount, price, validation_error = self._validate_order_values(size_btc, limit_price)
             if validation_error:
-                return False, None, validation_error
+                return LighterSubmissionReceipt.failure(validation_error)
 
             try:
                 tx, resp, err = await signer.create_order(
                     market_index=BTC_MARKET_INDEX,
-                    client_order_index=int(trade_id),
+                    client_order_index=int(client_order_index if client_order_index is not None else trade_id),
                     base_amount=base_amount,
                     price=price,
                     is_ask=is_ask,
@@ -126,17 +129,21 @@ class LighterClient:
                 )
                 if err:
                     logger.error("Lighter order submission failed: %s", err)
-                    return False, None, str(err)
+                    return LighterSubmissionReceipt.failure(err)
 
-                tx_hash = resp.tx_hash if hasattr(resp, "tx_hash") else str(resp)
+                receipt = LighterSubmissionReceipt.from_response(resp)
+                if not receipt.success:
+                    logger.error("Lighter order acknowledgement rejected: %s", receipt.error)
+                    return receipt
                 logger.info(
-                    "Live Lighter order submitted! Trade #%s, side=%s, size=%s BTC, limit=%s, tx=%s",
-                    trade_id, side, size_btc, limit_price, tx_hash,
+                    "Live Lighter order acknowledged! Trade #%s, client_order_index=%s, side=%s, size=%s BTC, limit=%s, tx=%s, code=%s",
+                    trade_id, client_order_index if client_order_index is not None else trade_id,
+                    side, size_btc, limit_price, receipt.tx_hash, receipt.response_code,
                 )
-                return True, tx_hash, None
+                return receipt
             except Exception as exc:
                 logger.exception("Exception submitting Lighter live order: %s", exc)
-                return False, None, str(exc)
+                return LighterSubmissionReceipt.failure(exc, uncertain=True)
 
     async def close_snipe_order(
         self,
@@ -145,26 +152,28 @@ class LighterClient:
         size_btc: float,
         limit_price: float,
         trade_id: int,
-    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        client_order_index: Optional[int] = None,
+    ) -> LighterSubmissionReceipt:
         """
         Executes a live market IOC reduce-only exit bounded by the displayed-price limit.
-        Returns: (success: bool, tx_hash: Optional[str], error_message: Optional[str])
+        A valid Lighter ``RespSendTx`` code and transaction hash are required
+        before reconciliation can begin.
         """
         async with self._lock:
             signer = self._get_signer()
             if not signer:
-                return False, None, "SignerClient not initialized: check account index and API key."
+                return LighterSubmissionReceipt.failure("SignerClient not initialized: check account index and API key.")
 
             # Closing a LONG means selling (is_ask = True); closing a SHORT means buying (is_ask = False)
             is_ask = (side.upper() == "LONG")
             base_amount, price, validation_error = self._validate_order_values(size_btc, limit_price)
             if validation_error:
-                return False, None, validation_error
+                return LighterSubmissionReceipt.failure(validation_error)
 
             try:
                 tx, resp, err = await signer.create_order(
                     market_index=BTC_MARKET_INDEX,
-                    client_order_index=int(trade_id) + 10_000,
+                    client_order_index=int(client_order_index if client_order_index is not None else int(trade_id) + 10_000),
                     base_amount=base_amount,
                     price=price,
                     is_ask=is_ask,
@@ -176,14 +185,21 @@ class LighterClient:
                 )
                 if err:
                     logger.error("Lighter exit order submission failed: %s", err)
-                    return False, None, str(err)
+                    return LighterSubmissionReceipt.failure(err)
 
-                tx_hash = resp.tx_hash if hasattr(resp, "tx_hash") else str(resp)
-                logger.info("Live Lighter exit order submitted! Trade #%s, side=%s, tx=%s", trade_id, side, tx_hash)
-                return True, tx_hash, None
+                receipt = LighterSubmissionReceipt.from_response(resp)
+                if not receipt.success:
+                    logger.error("Lighter exit acknowledgement rejected: %s", receipt.error)
+                    return receipt
+                logger.info(
+                    "Live Lighter exit order acknowledged! Trade #%s, client_order_index=%s, side=%s, tx=%s, code=%s",
+                    trade_id, client_order_index if client_order_index is not None else int(trade_id) + 10_000,
+                    side, receipt.tx_hash, receipt.response_code,
+                )
+                return receipt
             except Exception as exc:
                 logger.exception("Exception closing Lighter live order: %s", exc)
-                return False, None, str(exc)
+                return LighterSubmissionReceipt.failure(exc, uncertain=True)
 
     async def wait_for_order_outcome(
         self,

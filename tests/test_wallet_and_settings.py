@@ -95,10 +95,12 @@ class TestWalletAndSettings(unittest.TestCase):
             "leverage": 30.0,
             "trade_margin_fraction": 0.40,
             "min_lag_trigger": 7.5,
+            "minimum_net_profit_usd": 0.05,
         })
         self.assertEqual(self.settings_mgr.leverage, 30.0)
         self.assertEqual(self.settings_mgr.trade_margin_fraction, 0.40)
         self.assertEqual(self.settings_mgr.min_lag_trigger, 7.5)
+        self.assertEqual(self.settings_mgr.minimum_net_profit_usd, 0.05)
 
         # Verify in SQLite table
         with sqlite3.connect(self.settings_db_path) as conn:
@@ -109,12 +111,14 @@ class TestWalletAndSettings(unittest.TestCase):
             self.assertEqual(data["leverage"], 30.0)
             self.assertEqual(data["trade_margin_fraction"], 0.40)
             self.assertEqual(data["min_lag_trigger"], 7.5)
+            self.assertEqual(data["minimum_net_profit_usd"], 0.05)
 
         # Reload from DB
         reloaded = SettingsManager(db_path=self.settings_db_path)
         self.assertEqual(reloaded.leverage, 30.0)
         self.assertEqual(reloaded.trade_margin_fraction, 0.40)
         self.assertEqual(reloaded.min_lag_trigger, 7.5)
+        self.assertEqual(reloaded.minimum_net_profit_usd, 0.05)
 
     def test_no_json_files_written_to_disk(self):
         """Verify zero .json configuration or wallet files exist on disk."""

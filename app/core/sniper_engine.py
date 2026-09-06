@@ -32,8 +32,7 @@ from app.config import (
 from app.core.execution import (
     MIN_EXECUTABLE_NOTIONAL_USD,
     ExecutableOrder,
-    calculate_executable_order,
-    calculate_profitable_price_limit,
+    calculate_signal_entry_plan,
 )
 from app.core.execution.telemetry import ExecutionTelemetryMixin
 from app.core.dual_execution import DualExecutionMixin
@@ -163,13 +162,18 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
         calculated_size: Dict[str, float],
         executable: ExecutableOrder,
         timestamp: str,
+        arrival_economics_failed: bool = False,
     ) -> Dict[str, Any]:
         """Record why a valid signal did not produce an unsafe, undersized order."""
         below_notional_floor = (
             executable.size_btc > 0
             and executable.limit_notional_usd <= MIN_EXECUTABLE_NOTIONAL_USD
         )
-        rejection_reason = "BELOW_MINIMUM_NOTIONAL" if below_notional_floor else "INSUFFICIENT_EXECUTABLE_LIQUIDITY"
+        rejection_reason = (
+            "INSUFFICIENT_ARRIVAL_ECONOMICS" if arrival_economics_failed
+            else "BELOW_MINIMUM_NOTIONAL" if below_notional_floor
+            else "INSUFFICIENT_EXECUTABLE_LIQUIDITY"
+        )
         self.current_decision = {
             "stance": "MONITORING",
             "action": "NONE",
@@ -183,6 +187,8 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
                 f"the executable amount is ${executable.notional_usd:,.2f} versus the "
                 f"${calculated_size['notional_usd']:,.2f} cap. Orders require at least "
                 f"0.00010 BTC and strictly more than ${MIN_EXECUTABLE_NOTIONAL_USD:.2f} USDC."
+                if not arrival_economics_failed else
+                f"{side} signal withheld: the executable quantity cannot preserve the configured net-profit floor after the latency buffer."
             ),
             "rejection_reason": rejection_reason,
             "target_price": None,
@@ -366,6 +372,9 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
         """
         now = time.time()
         now_str = datetime.now().strftime("%H:%M:%S")
+        self.max_hold_seconds = settings_manager.max_hold_seconds
+        self.stop_loss_drawdown = settings_manager.stop_loss_drawdown
+        self.ladder_min_expected_profit_usd = settings_manager.minimum_net_profit_usd
 
         l_bid = lighter_state.get("best_bid", 0.0)
         l_ask = lighter_state.get("best_ask", 0.0)
@@ -634,6 +643,23 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
             }
             return self.get_summary()
 
+        if is_real and self.live_entry_block_reason:
+            self.current_decision = {
+                "stance": "MONITORING",
+                "action": "NONE",
+                "target_exchange": "Lighter.xyz",
+                "elected_leader": leader_name,
+                "signal_strength_usd": 0.0,
+                "rationale": f"REAL/DUAL entry blocked until Lighter order safety is reconciled: {self.live_entry_block_reason}",
+                "rejection_reason": "LIVE_ORDER_SAFETY_BLOCK",
+                "target_price": None,
+                "stop_loss_price": None,
+                "timestamp": now_str,
+                "trading_mode": settings_manager.trading_mode,
+                "paper_only": False,
+            }
+            return self.get_summary()
+
         # Condition A: LONG Snipe
         # - Lighter Ask is cheaper than Basis-Adjusted Leader by >= MIN_LAG_TRIGGER
         # - AND a high-conviction major-venue leader is moving up at the configured velocity
@@ -644,23 +670,17 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
         )
         if is_long_signal:
             calc = self.calculate_trade_size(l_ask)
-            profitability_limit = calculate_profitable_price_limit(
-                side="LONG",
-                target_price=adj_leader_px,
-                target_exit_buffer_usd=self.target_exit_buffer_usd,
-                minimum_expected_profit_usd=self.ladder_min_expected_profit_usd,
-            )
-            executable = calculate_executable_order(
-                side="LONG",
-                bids=lighter_state.get("bids", []),
-                asks=lighter_state.get("asks", []),
-                limit_price=profitability_limit,
-                notional_cap_usd=calc["notional_usd"],
-                max_levels=self.max_execution_book_levels,
+            entry_plan = calculate_signal_entry_plan(
+                side="LONG", is_real=is_real, bids=lighter_state.get("bids", []), asks=lighter_state.get("asks", []),
+                target_price=adj_leader_px, target_exit_buffer_usd=self.target_exit_buffer_usd,
+                minimum_net_profit_usd=self.ladder_min_expected_profit_usd,
+                latency_buffer_usd=max(self.execution_slippage_buffer_usd, self.execution_latency_guard.adverse_quote_buffer_usd),
+                notional_cap_usd=calc["notional_usd"], max_levels=self.max_execution_book_levels,
                 liquidity_participation=self.execution_liquidity_participation,
                 slippage_buffer_usd=self.execution_slippage_buffer_usd,
             )
-            if not executable.meets_minimums:
+            executable = entry_plan.executable
+            if not entry_plan.meets_requirements:
                 return self._reject_for_unexecutable_depth(
                     side="LONG",
                     entry_price=l_ask,
@@ -668,6 +688,10 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
                     calculated_size=calc,
                     executable=executable,
                     timestamp=now_str,
+                    arrival_economics_failed=(
+                        entry_plan.arrival is not None and executable.meets_minimums
+                        and not entry_plan.arrival.meets_economics
+                    ),
                 )
 
             self.trade_counter += 1
@@ -719,6 +743,8 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
                 "planned_size_btc": trade_size,
                 "planned_entry_px": entry_px,
                 "planned_notional_usd": notional_usd,
+                "minimum_net_profit_usd": self.ladder_min_expected_profit_usd,
+                "estimated_cost_usd": 0.0,
                 "signal_ts": now,
                 "execution_state": "ENTRY_SUBMITTED" if is_real else "OPEN",
                 "order_status": "PENDING_SUBMISSION" if is_real else "SIMULATED",
@@ -769,23 +795,17 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
 
         if is_short_signal:
             calc = self.calculate_trade_size(l_bid)
-            profitability_limit = calculate_profitable_price_limit(
-                side="SHORT",
-                target_price=adj_leader_px,
-                target_exit_buffer_usd=self.target_exit_buffer_usd,
-                minimum_expected_profit_usd=self.ladder_min_expected_profit_usd,
-            )
-            executable = calculate_executable_order(
-                side="SHORT",
-                bids=lighter_state.get("bids", []),
-                asks=lighter_state.get("asks", []),
-                limit_price=profitability_limit,
-                notional_cap_usd=calc["notional_usd"],
-                max_levels=self.max_execution_book_levels,
+            entry_plan = calculate_signal_entry_plan(
+                side="SHORT", is_real=is_real, bids=lighter_state.get("bids", []), asks=lighter_state.get("asks", []),
+                target_price=adj_leader_px, target_exit_buffer_usd=self.target_exit_buffer_usd,
+                minimum_net_profit_usd=self.ladder_min_expected_profit_usd,
+                latency_buffer_usd=max(self.execution_slippage_buffer_usd, self.execution_latency_guard.adverse_quote_buffer_usd),
+                notional_cap_usd=calc["notional_usd"], max_levels=self.max_execution_book_levels,
                 liquidity_participation=self.execution_liquidity_participation,
                 slippage_buffer_usd=self.execution_slippage_buffer_usd,
             )
-            if not executable.meets_minimums:
+            executable = entry_plan.executable
+            if not entry_plan.meets_requirements:
                 return self._reject_for_unexecutable_depth(
                     side="SHORT",
                     entry_price=l_bid,
@@ -793,6 +813,10 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
                     calculated_size=calc,
                     executable=executable,
                     timestamp=now_str,
+                    arrival_economics_failed=(
+                        entry_plan.arrival is not None and executable.meets_minimums
+                        and not entry_plan.arrival.meets_economics
+                    ),
                 )
 
             self.trade_counter += 1
@@ -844,6 +868,8 @@ class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMix
                 "planned_size_btc": trade_size,
                 "planned_entry_px": entry_px,
                 "planned_notional_usd": notional_usd,
+                "minimum_net_profit_usd": self.ladder_min_expected_profit_usd,
+                "estimated_cost_usd": 0.0,
                 "signal_ts": now,
                 "execution_state": "ENTRY_SUBMITTED" if is_real else "OPEN",
                 "order_status": "PENDING_SUBMISSION" if is_real else "SIMULATED",

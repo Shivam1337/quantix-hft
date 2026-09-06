@@ -179,7 +179,7 @@ class LighterClient:
                     return False, None, str(err)
 
                 tx_hash = resp.tx_hash if hasattr(resp, "tx_hash") else str(resp)
-                logger.info("Live Lighter position closed! Trade #%s, side=%s, tx=%s", trade_id, side, tx_hash)
+                logger.info("Live Lighter exit order submitted! Trade #%s, side=%s, tx=%s", trade_id, side, tx_hash)
                 return True, tx_hash, None
             except Exception as exc:
                 logger.exception("Exception closing Lighter live order: %s", exc)

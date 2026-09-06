@@ -104,7 +104,9 @@ class ExecutionTelemetryMixin:
             "side": trade.get("side"),
             "requested_size_btc": _number(trade.get("size_btc")),
             "ioc_limit_price": _number(
-                trade.get("execution_price_limit") if phase == "ENTRY" else trade.get("exit_requested_px")
+                trade.get("execution_price_limit")
+                if phase == "ENTRY"
+                else (trade.get("exit_limit_px") or trade.get("exit_requested_px"))
             ),
             "reduce_only": phase == "EXIT",
             "lighter_book": capture_lighter_book(state, captured_epoch=submitted_at),

@@ -1,11 +1,14 @@
 """Reduce-only exit lifecycle for fill-confirmed Lighter positions."""
 import asyncio
+import logging
 import time
 from datetime import datetime
 from typing import Any, Dict
 
 from app.core.lighter_order_reconciliation import LighterOrderOutcome
 
+
+logger = logging.getLogger(__name__)
 
 RECONCILIATION_WINDOW_SECONDS = 2.0
 RECONCILIATION_RETRY_SECONDS = 0.25
@@ -16,10 +19,17 @@ class LiveExitExecutionMixin:
     """Owns exits so entry execution remains compact and independently testable."""
 
     def _fire_live_close(self, trade: Dict[str, Any], exit_price: float, exit_reason: str) -> None:
+        buffer = float(getattr(self, "execution_slippage_buffer_usd", 3.0))
+        if trade.get("side") == "LONG":
+            exit_limit = round(max(0.1, exit_price - buffer), 1)
+        else:
+            exit_limit = round(exit_price + buffer, 1)
+
         trade.update({
             "execution_state": "EXIT_SUBMITTED",
             "exit_signal_ts": time.time(),
             "exit_requested_px": exit_price,
+            "exit_limit_px": exit_limit,
             "exit_reason": exit_reason,
         })
         self._schedule_live_task(self._execute_live_close(trade))
@@ -32,9 +42,10 @@ class LiveExitExecutionMixin:
         trade["exit_submit_ts"] = submitted_at
         self._record_latency(trade, "fill_to_exit_submit", trade.get("entry_fill_observed_ts"), submitted_at)
         self._capture_order_submission(trade, "EXIT", submitted_at)
+        exit_limit = trade.get("exit_limit_px", trade["exit_requested_px"])
         success, tx_hash, error = await lighter_client.close_snipe_order(
             side=trade["side"], size_btc=trade["size_btc"],
-            limit_price=trade["exit_requested_px"], trade_id=trade["id"],
+            limit_price=exit_limit, trade_id=trade["id"],
         )
         acknowledged_at = time.time()
         if not success:
@@ -132,6 +143,10 @@ class LiveExitExecutionMixin:
             self.closed_trades.appendleft(closed)
             self.last_close_ts = closed_at
             self.active_trade = None
+            logger.info(
+                "Confirmed Lighter position closed! Trade #%s, side=%s, exit_px=%s, net_pnl=$%s",
+                trade.get("id"), trade.get("side"), round(exit_price, 2), round(net_pnl, 4),
+            )
 
     def _live_execution_pending_summary(self, leader_name: str, timestamp: str) -> Dict[str, Any]:
         trade = self.active_trade

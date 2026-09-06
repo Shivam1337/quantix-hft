@@ -165,6 +165,7 @@ class LiveExecutionLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
             self.assertEqual(1, len(fake_client.close_calls))
             self.assertEqual(0.05, fake_client.close_calls[0]["size_btc"])
+            self.assertEqual(107.0, fake_client.close_calls[0]["limit_price"])
 
             fake_client.exit_gate.set()
             for _ in range(3):
@@ -197,6 +198,19 @@ class LiveExecutionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         engine._apply_exit_fill(trade, LighterOrderOutcome(10_003, "filled", 0.03, 3.3, 110.0, time.time()))
         self.assertIsNone(engine.active_trade)
         self.assertAlmostEqual(0.5, engine.closed_trades[0]["net_pnl"])
+
+    async def test_exit_slippage_buffer_applied(self):
+        engine = SniperEngine()
+        engine.execution_slippage_buffer_usd = 4.5
+        long_trade = {"id": 1, "side": "LONG"}
+        engine._fire_live_close(long_trade, 80000.0, "TIMEOUT")
+        self.assertEqual(79995.5, long_trade["exit_limit_px"])
+        self.assertEqual(80000.0, long_trade["exit_requested_px"])
+
+        short_trade = {"id": 2, "side": "SHORT"}
+        engine._fire_live_close(short_trade, 80000.0, "TIMEOUT")
+        self.assertEqual(80004.5, short_trade["exit_limit_px"])
+        self.assertEqual(80000.0, short_trade["exit_requested_px"])
 
 
 class SimulationProfitRegressionTests(unittest.TestCase):

@@ -1,12 +1,13 @@
 """Terminal-only tests for conservative live-order safety primitives."""
 import os
+import sqlite3
 import tempfile
 import unittest
 from types import SimpleNamespace
 
 from app.core.execution.economics import calculate_arrival_time_executable_order
 from app.core.execution.latency import ExecutionLatencyGuard
-from app.core.execution.order_journal import OrderJournal
+from app.core.execution.order_journal import MAX_LIGHTER_CLIENT_ORDER_INDEX, OrderJournal
 from app.core.execution.submission import LighterSubmissionReceipt
 
 
@@ -103,6 +104,62 @@ class LatencyGuardTests(unittest.TestCase):
 
 
 class OrderJournalTests(unittest.TestCase):
+    def test_durable_indexes_fit_lighters_48_bit_namespace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "orders.db")
+            journal = OrderJournal(path)
+            submitted_at = 1_700_000_000.123
+            first = journal.reserve_intent(
+                trade_id=1, phase="ENTRY", side="LONG", size_btc=0.001,
+                limit_price=80_000.0, submitted_at=submitted_at,
+            )
+            second = journal.reserve_intent(
+                trade_id=2, phase="EXIT", side="LONG", size_btc=0.001,
+                limit_price=80_001.0, submitted_at=submitted_at,
+            )
+
+            self.assertGreater(first, 0)
+            self.assertEqual(first + 1, second)
+            self.assertLessEqual(second, MAX_LIGHTER_CLIENT_ORDER_INDEX)
+
+    def test_new_indexes_ignore_legacy_out_of_range_audit_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "orders.db")
+            journal = OrderJournal(path)
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO lighter_order_journal (
+                        client_order_index, trade_id, phase, state, side, size_btc,
+                        limit_price, created_at, updated_at, submitted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        MAX_LIGHTER_CLIENT_ORDER_INDEX + 100,
+                        99,
+                        "ENTRY",
+                        "SUBMISSION_FAILED",
+                        "LONG",
+                        0.001,
+                        80_000.0,
+                        1.0,
+                        1.0,
+                        1.0,
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            new_index = journal.reserve_intent(
+                trade_id=1, phase="ENTRY", side="LONG", size_btc=0.001,
+                limit_price=80_000.0, submitted_at=1_700_000_000.0,
+            )
+
+            self.assertLessEqual(new_index, MAX_LIGHTER_CLIENT_ORDER_INDEX)
+            self.assertNotEqual(MAX_LIGHTER_CLIENT_ORDER_INDEX + 100, new_index)
+
     def test_unresolved_intent_survives_restart_and_client_indices_do_not_reuse(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "orders.db")

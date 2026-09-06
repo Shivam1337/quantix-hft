@@ -13,8 +13,8 @@ from app.config import SQLITE_DB_PATH
 
 
 TERMINAL_STATES = frozenset({"TERMINAL", "SUBMISSION_FAILED"})
-# Lighter's Windows signer declares ClientOrderIndex as ``ctypes.c_longlong``.
-MAX_LIGHTER_CLIENT_ORDER_INDEX = 9_223_372_036_854_775_807
+# Lighter rejects client order indexes above its unsigned 48-bit namespace.
+MAX_LIGHTER_CLIENT_ORDER_INDEX = (1 << 48) - 1
 
 
 @dataclass(frozen=True)
@@ -68,12 +68,23 @@ class OrderJournal:
         normalized_phase = str(phase).upper()
         with self._locked_connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            latest = connection.execute("SELECT COALESCE(MAX(client_order_index), 0) FROM lighter_order_journal").fetchone()[0]
+            # Older builds persisted wall-clock microseconds, which are above
+            # Lighter's 48-bit limit. Keep those audit rows, but do not let an
+            # invalid historical value prevent a valid new index from being
+            # allocated after deployment.
+            latest = connection.execute(
+                """
+                SELECT COALESCE(MAX(client_order_index), 0)
+                FROM lighter_order_journal
+                WHERE client_order_index BETWEEN 1 AND ?
+                """,
+                (MAX_LIGHTER_CLIENT_ORDER_INDEX,),
+            ).fetchone()[0]
             if self.is_durable:
-                # A persisted microsecond clock makes collision with pre-journal
-                # trade counters impractical, while retaining a monotonic retry
-                # path for multiple orders in the same microsecond.
-                candidate = max(int(now * 1_000_000), int(latest) + 1)
+                # Milliseconds remain comfortably inside the 48-bit namespace
+                # for thousands of years. The persisted max keeps same-ms
+                # submissions and restarts strictly monotonic.
+                candidate = max(1, int(now * 1_000), int(latest) + 1)
             else:
                 candidate = int(trade_id) + (10_000 if normalized_phase == "EXIT" else 0)
                 candidate = max(candidate, int(latest) + 1) if self._intent_exists(connection, candidate) else candidate

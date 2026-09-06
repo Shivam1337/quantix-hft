@@ -148,6 +148,16 @@ aside.sidebar {
   background: rgba(16, 229, 152, 0.14);
 }
 
+.sidebar-mode-box.mode-dual {
+  background: rgba(168, 85, 247, 0.08);
+  border-color: rgba(168, 85, 247, 0.35);
+}
+
+.sidebar-mode-box.mode-dual:hover {
+  border-color: var(--purple);
+  background: rgba(168, 85, 247, 0.14);
+}
+
 .sidebar-mode-box.mode-paused {
   background: rgba(239, 68, 68, 0.08);
   border-color: rgba(239, 68, 68, 0.4);
@@ -172,6 +182,11 @@ aside.sidebar {
   box-shadow: 0 0 8px var(--green);
 }
 
+.sidebar-mode-box.mode-dual .mode-indicator-dot {
+  background: var(--purple);
+  box-shadow: 0 0 8px var(--purple);
+}
+
 .sidebar-mode-box.mode-paused .mode-indicator-dot {
   background: var(--red);
   box-shadow: 0 0 8px var(--red);
@@ -193,6 +208,10 @@ aside.sidebar {
 
 .sidebar-mode-box.mode-real .mode-indicator-label {
   color: var(--green);
+}
+
+.sidebar-mode-box.mode-dual .mode-indicator-label {
+  color: var(--purple);
 }
 
 .sidebar-mode-box.mode-paused .mode-indicator-label {
@@ -1379,7 +1398,7 @@ table.divided-table tr:hover {
 
 .mode-selector-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
   gap: 16px;
   margin-bottom: 12px;
 }
@@ -1410,6 +1429,11 @@ table.divided-table tr:hover {
   background: rgba(16, 229, 152, 0.06);
 }
 
+.mode-card#mode-card-dual.active {
+  border-color: var(--purple);
+  background: rgba(168, 85, 247, 0.06);
+}
+
 .mode-card-radio {
   width: 18px;
   height: 18px;
@@ -1430,6 +1454,10 @@ table.divided-table tr:hover {
   border-color: var(--green);
 }
 
+.mode-card#mode-card-dual.active .mode-card-radio {
+  border-color: var(--purple);
+}
+
 .mode-card.active .radio-dot {
   width: 8px;
   height: 8px;
@@ -1439,6 +1467,10 @@ table.divided-table tr:hover {
 
 .mode-card#mode-card-real.active .radio-dot {
   background: var(--green);
+}
+
+.mode-card#mode-card-dual.active .radio-dot {
+  background: var(--purple);
 }
 
 .mode-card-name {

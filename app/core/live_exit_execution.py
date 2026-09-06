@@ -19,6 +19,7 @@ class LiveExitExecutionMixin:
     """Owns exits so entry execution remains compact and independently testable."""
 
     def _fire_live_close(self, trade: Dict[str, Any], exit_price: float, exit_reason: str) -> None:
+        self._capture_dual_exit_signal(trade, exit_price, exit_reason)
         buffer = float(getattr(self, "execution_slippage_buffer_usd", 3.0))
         if trade.get("side") == "LONG":
             exit_limit = round(max(0.1, exit_price - buffer), 1)
@@ -50,6 +51,7 @@ class LiveExitExecutionMixin:
         acknowledged_at = time.time()
         if not success:
             trade.update({"exit_order_error": error, "execution_state": "OPEN"})
+            self._record_dual_exit_failure(trade, error)
             self._record_execution_terminal(
                 trade, phase="EXIT", result="EXIT_SUBMISSION_FAILED", observed_at=acknowledged_at, error=error,
             )
@@ -139,6 +141,7 @@ class LiveExitExecutionMixin:
             "exit_fill_status": "FILLED", "latencies_ms": dict(trade.get("latencies_ms", {})),
             "cost_model": "Confirmed Lighter IOC fills; no fee model is applied.",
         }
+        self._finalize_dual_comparison(trade, closed)
         if self.active_trade is trade:
             self.closed_trades.appendleft(closed)
             self.last_close_ts = closed_at

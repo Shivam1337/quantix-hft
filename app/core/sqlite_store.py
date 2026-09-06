@@ -214,6 +214,7 @@ class SqliteStore:
             "closed_trades": [],
             "repricing_events": [],
             "execution_attempts": [],
+            "execution_comparisons": [],
         }
 
     async def load_recent(
@@ -259,6 +260,16 @@ class SqliteStore:
                     (trade_limit,),
                 ) as cursor:
                     attempt_rows = await cursor.fetchall()
+                async with self._db.execute(
+                    """
+                    SELECT payload FROM lead_lag_events
+                    WHERE event_type = 'DUAL_EXECUTION_COMPARISON'
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (trade_limit,),
+                ) as cursor:
+                    comparison_rows = await cursor.fetchall()
             else:
                 def _query_sync():
                     c = self._sync_conn.cursor()
@@ -289,9 +300,18 @@ class SqliteStore:
                         """,
                         (trade_limit,),
                     ).fetchall()
-                    return t_rows, ch_rows, ev_rows, at_rows
+                    cmp_rows = c.execute(
+                        """
+                        SELECT payload FROM lead_lag_events
+                        WHERE event_type = 'DUAL_EXECUTION_COMPARISON'
+                        ORDER BY id DESC
+                        LIMIT ?
+                        """,
+                        (trade_limit,),
+                    ).fetchall()
+                    return t_rows, ch_rows, ev_rows, at_rows, cmp_rows
 
-                trade_rows, chart_rows, event_rows, attempt_rows = await asyncio.to_thread(_query_sync)
+                trade_rows, chart_rows, event_rows, attempt_rows, comparison_rows = await asyncio.to_thread(_query_sync)
 
             trades = [payload for row in trade_rows if (payload := self._decode_payload(row["payload"] if isinstance(row, sqlite3.Row) or hasattr(row, "keys") else row[0]))]
             samples = [payload for row in reversed(chart_rows) if (payload := self._decode_payload(row["payload"] if isinstance(row, sqlite3.Row) or hasattr(row, "keys") else row[0]))]
@@ -307,11 +327,18 @@ class SqliteStore:
                 attempt = payload.get("event") if payload else None
                 if isinstance(attempt, dict):
                     attempts.append(attempt)
+            comparisons = []
+            for row in comparison_rows:
+                payload = self._decode_payload(row["payload"] if isinstance(row, sqlite3.Row) or hasattr(row, "keys") else row[0])
+                comparison = payload.get("event") if payload else None
+                if isinstance(comparison, dict):
+                    comparisons.append(comparison)
             return {
                 "chart_samples": samples,
                 "closed_trades": trades,
                 "repricing_events": events,
                 "execution_attempts": attempts,
+                "execution_comparisons": comparisons,
             }
         except Exception as error:
             logger.exception("Error loading recent records from SQLite: %s", error)
@@ -691,4 +718,3 @@ class SqliteStore:
                     return self._decode_payload(raw)
                 return None
         return await asyncio.to_thread(self.load_wallet_credentials_sync, key)
-

@@ -83,6 +83,9 @@ def build_dashboard_tick(manager: "StateManager") -> Dict[str, Any]:
     """Build the fast path used four times per second by an SSE client."""
     analysis = manager.lead_lag_analyzer.get_latest()
     engine = manager.sniper_engine
+    active_position = copy.deepcopy(engine.active_trade)
+    if isinstance(active_position, dict):
+        active_position.pop("execution_comparison", None)
     return {
         "updated_at": manager.last_recalculated_at,
         "market": _market_cards(manager),
@@ -90,7 +93,7 @@ def build_dashboard_tick(manager: "StateManager") -> Dict[str, Any]:
         "consensus_status": analysis["consensus_status"],
         "consensus_agreement": analysis["consensus_agreement"],
         "trade_decision": copy.deepcopy(engine.current_decision),
-        "active_position": copy.deepcopy(engine.active_trade),
+        "active_position": active_position,
         "trading_enabled": settings_manager.trading_enabled,
         "system": _system_tick(manager),
     }
@@ -118,6 +121,7 @@ def build_dashboard_detail(manager: "StateManager") -> Dict[str, Any]:
     """Build the one-Hz chart, table, and host-health payload."""
     persistence = manager.get_persistence_status()
     engine = manager.sniper_engine
+    comparisons = engine.get_execution_comparisons() if hasattr(engine, "get_execution_comparisons") else []
     return {
         "system": {
             "resources": manager.get_resource_usage(),
@@ -127,6 +131,7 @@ def build_dashboard_detail(manager: "StateManager") -> Dict[str, Any]:
         "chart": _chart_payload(manager.price_history, persistence.get("backend", "database")),
         "trading_performance": copy.deepcopy(engine.get_performance()),
         "recent_trades": copy.deepcopy(list(engine.closed_trades)[:10]),
+        "execution_comparisons": copy.deepcopy(comparisons[:10]),
         "recent_repricing_events": manager.lead_lag_analyzer.get_repricing_events()[:10],
     }
 

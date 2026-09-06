@@ -270,6 +270,7 @@ class PostgresStore:
             "closed_trades": [],
             "repricing_events": [],
             "execution_attempts": [],
+            "execution_comparisons": [],
         }
 
     async def load_recent(
@@ -316,6 +317,16 @@ class PostgresStore:
                 """,
                 trade_limit,
             )
+            comparison_rows = await connection.fetch(
+                """
+                SELECT payload::text AS payload
+                FROM lead_lag_events
+                WHERE event_type = 'DUAL_EXECUTION_COMPARISON'
+                ORDER BY id DESC
+                LIMIT $1
+                """,
+                trade_limit,
+            )
 
         trades = [payload for row in trade_rows if (payload := self._decode_payload(row["payload"]))]
         samples = [payload for row in reversed(chart_rows) if (payload := self._decode_payload(row["payload"]))]
@@ -331,11 +342,18 @@ class PostgresStore:
             attempt = payload.get("event") if payload else None
             if isinstance(attempt, dict):
                 attempts.append(attempt)
+        comparisons = []
+        for row in comparison_rows:
+            payload = self._decode_payload(row["payload"])
+            comparison = payload.get("event") if payload else None
+            if isinstance(comparison, dict):
+                comparisons.append(comparison)
         return {
             "chart_samples": samples,
             "closed_trades": trades,
             "repricing_events": events,
             "execution_attempts": attempts,
+            "execution_comparisons": comparisons,
         }
 
 
@@ -608,5 +626,4 @@ class PostgresStore:
             if row:
                 return self._decode_payload(row["payload"])
             return None
-
 

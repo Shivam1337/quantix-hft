@@ -3,6 +3,7 @@ import { displayUtcTime, fmt, setText, topBookSize } from './ui-utils.js';
 let providerSignature = '';
 let tradeSignature = '';
 let eventSignature = '';
+let comparisonSignature = '';
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (character) => ({
@@ -108,6 +109,45 @@ export function renderTrades(trades) {
     : '<tr><td colspan="8" style="color: var(--text-muted); text-align: center;">No closed paper trades recorded yet.</td></tr>';
 }
 
+function hasNumber(value) {
+  return Number.isFinite(Number(value));
+}
+
+function comparisonPrice(value) {
+  return hasNumber(value) ? `$${fmt(value, 1)}` : '--';
+}
+
+function comparisonPnl(value) {
+  if (!hasNumber(value)) return '--';
+  const pnl = Number(value);
+  return `${pnl >= 0 ? '+' : ''}$${fmt(pnl, 2)}`;
+}
+
+function comparisonRow(comparison) {
+  const simulated = comparison.simulated || {};
+  const real = comparison.real || {};
+  const side = escapeHtml(comparison.side || '--');
+  const status = escapeHtml(comparison.status || 'PENDING');
+  const simPnl = comparisonPnl(simulated.net_pnl);
+  const realPnl = comparisonPnl(real.net_pnl);
+  const delta = comparisonPnl(comparison.pnl_delta_usd);
+  const deltaClass = hasNumber(comparison.pnl_delta_usd) && Number(comparison.pnl_delta_usd) >= 0 ? 'win-tag' : 'loss-tag';
+  const fillRatio = hasNumber(real.fill_ratio) ? `${fmt(Number(real.fill_ratio) * 100, 1)}%` : '--';
+  const entryLatency = hasNumber(real.entry_latency_ms) ? `${fmt(real.entry_latency_ms, 0)}ms` : '--';
+  return `<tr><td><strong style="color: ${comparison.side === 'LONG' ? 'var(--green)' : 'var(--orange)'};">${side}</strong> <span class="mono" style="color: var(--purple);">#${escapeHtml(comparison.comparison_id)}</span><div style="font-size: 9px; color: var(--text-muted);">${status}</div></td><td class="mono">${comparisonPrice(simulated.entry_price)} → ${comparisonPrice(simulated.exit_price)}<div style="font-size: 9px; color: var(--text-muted);">${escapeHtml(simulated.status || '--')} · ${simPnl}</div></td><td class="mono">${comparisonPrice(real.entry_price)} → ${comparisonPrice(real.exit_price)}<div style="font-size: 9px; color: var(--text-muted);">${escapeHtml(real.status || '--')} · ${realPnl}</div></td><td class="mono">${fillRatio}<div style="font-size: 9px; color: var(--text-muted);">entry ${entryLatency}</div></td><td class="mono ${hasNumber(comparison.pnl_delta_usd) ? deltaClass : ''}">${delta}</td></tr>`;
+}
+
+export function renderExecutionComparisons(comparisons) {
+  const body = document.getElementById('dual-comparisons-table-body');
+  const records = Array.isArray(comparisons) ? comparisons : [];
+  const signature = records.map((comparison) => `${comparison.comparison_id}:${comparison.status}:${comparison.updated_at}`).join('|');
+  if (!body || signature === comparisonSignature) return;
+  comparisonSignature = signature;
+  body.innerHTML = records.length
+    ? records.map(comparisonRow).join('')
+    : '<tr><td colspan="5" style="color: var(--text-muted); text-align: center;">DUAL mode is not active. No matched executions yet.</td></tr>';
+}
+
 function eventRow(event) {
   return `<tr><td class="mono">${escapeHtml(event.timestamp)}</td><td><strong style="color: var(--cyan);">${escapeHtml(event.direction)}</strong></td><td class="mono">$${fmt(event.initial_lag_usd, 1)}</td><td class="mono">${escapeHtml(event.catchup_seconds)}s</td><td><span class="${event.resolved ? 'win-tag' : 'loss-tag'}">${event.resolved ? 'RESOLVED' : 'TIMED_OUT'}</span></td></tr>`;
 }
@@ -124,8 +164,11 @@ export function renderRepricingEvents(events) {
 export function resetActivityTables() {
   tradeSignature = '';
   eventSignature = '';
+  comparisonSignature = '';
   const trades = document.getElementById('trades-table-body');
   const events = document.getElementById('repricing-table-body');
+  const comparisons = document.getElementById('dual-comparisons-table-body');
   if (trades) trades.innerHTML = '<tr><td colspan="8" style="color: var(--text-muted); text-align: center;">Awaiting trades...</td></tr>';
   if (events) events.innerHTML = '<tr><td colspan="5" style="color: var(--text-muted); text-align: center;">Monitoring breakout repricing cycles...</td></tr>';
+  if (comparisons) comparisons.innerHTML = '<tr><td colspan="5" style="color: var(--text-muted); text-align: center;">Awaiting matched DUAL executions...</td></tr>';
 }

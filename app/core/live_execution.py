@@ -48,6 +48,9 @@ class LiveExecutionMixin(LiveExitExecutionMixin):
         acknowledged_at = time.time()
         if not success:
             trade.update({"order_error": error, "order_status": "FAILED", "execution_state": "ENTRY_FAILED"})
+            self._record_dual_entry_failure(
+                trade, status="LIVE_ENTRY_SUBMISSION_FAILED", error=error,
+            )
             self._record_execution_terminal(
                 trade, phase="ENTRY", result="ENTRY_SUBMISSION_FAILED", observed_at=acknowledged_at, error=error,
             )
@@ -88,6 +91,9 @@ class LiveExecutionMixin(LiveExitExecutionMixin):
                     "entry_fill_status": "NONE",
                     "entry_terminal_observed_ts": observed_at,
                 })
+                self._record_dual_entry_failure(
+                    trade, status="LIVE_ENTRY_NOT_FILLED", error=outcome.status,
+                )
                 self._record_execution_terminal(
                     trade, phase="ENTRY", result="ENTRY_NOT_FILLED", observed_at=observed_at, outcome=outcome,
                 )
@@ -134,6 +140,7 @@ class LiveExecutionMixin(LiveExitExecutionMixin):
         )
         self._record_latency(trade, "ack_to_fill", trade.get("entry_ack_ts"), observed_at)
         self._record_latency(trade, "signal_to_fill", trade.get("signal_ts"), observed_at)
+        self._record_dual_entry_fill(trade)
         self._record_execution_terminal(
             trade,
             phase="ENTRY",

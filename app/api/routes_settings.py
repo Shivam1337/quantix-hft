@@ -1,7 +1,7 @@
 """
 API Routes for System Settings and Trading Mode.
 Exposes endpoints to view and update system configurations, Lighter API credentials,
-and toggle runtime execution mode (SIMULATION vs REAL).
+and toggle runtime execution mode (SIMULATION, REAL, or DUAL).
 """
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException
@@ -57,7 +57,7 @@ async def update_settings(req: UpdateSettingsRequest):
 
 @router.post("/mode", response_model=Dict[str, Any])
 async def switch_trading_mode(req: SwitchModeRequest):
-    """Switches trading mode between SIMULATION and REAL."""
+    """Switches trading mode between SIMULATION, REAL, and DUAL."""
     success, msg = settings_manager.set_trading_mode(req.mode)
     if not success:
         raise HTTPException(status_code=400, detail=msg)
@@ -86,4 +86,7 @@ async def switch_trading_activity(req: TradingActivityRequest):
 async def reset_simulation():
     """Resets paper trading history, engine stance, and starts a fresh simulation run."""
     from app.core.state_manager import state_manager
-    return await state_manager.reset_simulation()
+    result = await state_manager.reset_simulation()
+    if result.get("status") != "ok":
+        raise HTTPException(status_code=409, detail=result.get("message", "Simulation reset is unavailable."))
+    return result

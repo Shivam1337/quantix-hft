@@ -2,6 +2,7 @@ import { renderCharts } from './dashboard-charts.js';
 import { renderDetail, renderRealtime } from './dashboard-core.js';
 import {
   renderMarket,
+  renderExecutionComparisons,
   renderProviderInsights,
   renderRepricingEvents,
   renderTrades,
@@ -19,6 +20,7 @@ export function renderDashboard(state, flags) {
   }
   if (flags.activity) {
     renderTrades(state.recent_trades);
+    renderExecutionComparisons(state.execution_comparisons);
     renderRepricingEvents(state.recent_repricing_events);
   }
 }

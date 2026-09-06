@@ -1,6 +1,6 @@
 """
 Settings Manager.
-Persists and manages system configuration, runtime trading mode (SIMULATION vs REAL),
+Persists and manages system configuration, runtime trading mode (SIMULATION, REAL, or DUAL),
 Lighter network, API keys, and risk/sizing parameters.
 """
 import os
@@ -19,7 +19,7 @@ class SettingsManager:
     """Manages persistent runtime settings and mode toggling in the database."""
 
     DEFAULT_SETTINGS = {
-        "trading_mode": "SIMULATION",  # "SIMULATION" or "REAL"
+        "trading_mode": "SIMULATION",  # "SIMULATION", "REAL", or "DUAL"
         "trading_enabled": True,        # Global entry kill switch for both modes
         "network": "mainnet",          # "mainnet" or "testnet"
         "account_index": None,
@@ -163,7 +163,13 @@ class SettingsManager:
 
     @property
     def is_real_mode(self) -> bool:
-        return self.trading_mode == "REAL"
+        """Whether the selected mode is allowed to submit a live Lighter order."""
+        return self.trading_mode in {"REAL", "DUAL"}
+
+    @property
+    def is_dual_mode(self) -> bool:
+        """Whether each live order also receives a matched L2-ladder paper control."""
+        return self.trading_mode == "DUAL"
 
     @property
     def trading_enabled(self) -> bool:
@@ -231,16 +237,16 @@ class SettingsManager:
 
     def set_trading_mode(self, mode: str) -> Tuple[bool, str]:
         clean = mode.strip().upper()
-        if clean not in ("SIMULATION", "REAL"):
-            return False, f"Invalid trading mode '{mode}'. Must be 'SIMULATION' or 'REAL'."
+        if clean not in ("SIMULATION", "REAL", "DUAL"):
+            return False, f"Invalid trading mode '{mode}'. Must be 'SIMULATION', 'REAL', or 'DUAL'."
 
-        if clean == "REAL":
+        if clean in {"REAL", "DUAL"}:
             eligible, reason = self.check_real_mode_eligibility()
             if not eligible:
-                logger.warning("Cannot switch to REAL mode: %s. Reverting to SIMULATION.", reason)
+                logger.warning("Cannot switch to %s mode: %s. Reverting to SIMULATION.", clean, reason)
                 self._settings["trading_mode"] = "SIMULATION"
                 self._save_to_db()
-                return False, f"Cannot switch to REAL mode: {reason}"
+                return False, f"Cannot switch to {clean} mode: {reason}"
 
         self._settings["trading_mode"] = clean
         self._save_to_db()
@@ -272,16 +278,20 @@ class SettingsManager:
             "stop_loss_drawdown",
             "simulation_starting_balance",
         }
+        requested_mode = updates.get("trading_mode")
         for k, v in updates.items():
-            if k in allowed_keys:
-                if k == "trading_mode":
-                    self.set_trading_mode(str(v))
-                elif k == "trading_enabled":
+            if k in allowed_keys and k != "trading_mode":
+                if k == "trading_enabled":
                     success, message = self.set_trading_enabled(v)
                     if not success:
                         return False, message
                 else:
                     self._settings[k] = v
+
+        if requested_mode is not None:
+            success, message = self.set_trading_mode(str(requested_mode))
+            if not success:
+                return False, message
 
         self._save_to_db()
         return True, "Settings updated successfully."
@@ -293,6 +303,7 @@ class SettingsManager:
 
         return {
             "trading_mode": self.trading_mode,
+            "is_dual_mode": self.is_dual_mode,
             "trading_enabled": self.trading_enabled,
             "network": self.network,
             "account_index": self.account_index,

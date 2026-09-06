@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="BTC Perpetual Lead-Lag Measurement Experiment",
-    description="Paper-only asynchronous market measurement for testing whether Lighter follows major-venue BTC moves.",
+    description="Asynchronous lead-lag measurement with opt-in simulation, live, and matched dual-execution controls.",
     version="2.3.0",
     lifespan=lifespan,
 )

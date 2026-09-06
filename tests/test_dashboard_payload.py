@@ -50,6 +50,10 @@ class _Engine:
     def get_performance():
         return {"trading_mode": "SIMULATION", "net_pnl": 0.12, "total_trades": 1}
 
+    @staticmethod
+    def get_execution_comparisons():
+        return [{"comparison_id": 7, "status": "COMPLETE"}]
+
 
 class _Manager:
     def __init__(self):
@@ -107,6 +111,18 @@ class DashboardPayloadTests(unittest.TestCase):
         self.assertEqual(1.25, tick["market"]["binance"]["top_bid_size"])
         self.assertNotIn("bids", tick["market"]["binance"])
 
+    def test_tick_omits_nested_dual_comparison_detail(self):
+        self.manager.sniper_engine.active_trade = {
+            "id": 7,
+            "dual_execution": True,
+            "execution_comparison": {"simulated": {"large": "detail"}},
+        }
+
+        tick = build_dashboard_tick(self.manager)
+
+        self.assertTrue(tick["active_position"]["dual_execution"])
+        self.assertNotIn("execution_comparison", tick["active_position"])
+
     def test_detail_bounds_chart_history_for_browser_rendering(self):
         detail = build_dashboard_detail(self.manager)
         chart = detail["chart"]
@@ -116,6 +132,7 @@ class DashboardPayloadTests(unittest.TestCase):
         self.assertEqual(DASHBOARD_CHART_POINTS, len(chart["lighter_lag_series"]))
         self.assertEqual(float(25), chart["binance_series"][0])
         self.assertEqual("sqlite", chart["persistence"])
+        self.assertEqual("COMPLETE", detail["execution_comparisons"][0]["status"])
 
     def test_snapshot_combines_fast_and_detail_payloads(self):
         snapshot = build_dashboard_snapshot(self.manager)

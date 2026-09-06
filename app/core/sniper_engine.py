@@ -36,13 +36,14 @@ from app.core.execution import (
     calculate_profitable_price_limit,
 )
 from app.core.execution.telemetry import ExecutionTelemetryMixin
+from app.core.dual_execution import DualExecutionMixin
 from app.core.live_execution import LiveExecutionMixin
 from app.core.performance_metrics import build_performance
 from app.core.settings_manager import settings_manager
 from app.core.wallet_manager import wallet_manager
 
 
-class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
+class SniperEngine(LiveExecutionMixin, DualExecutionMixin, ExecutionTelemetryMixin):
     def __init__(self):
         self.min_lag_trigger = MIN_LAG_TRIGGER
         self.min_entry_velocity = MIN_ENTRY_VELOCITY_USD
@@ -67,6 +68,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
         self.active_trade: Optional[Dict[str, Any]] = None
         self.closed_trades: collections.deque = collections.deque(maxlen=MAX_CLOSED_TRADES_HISTORY)
         self._init_live_execution()
+        self._init_dual_execution()
         self._init_execution_telemetry()
 
         self.current_decision: Dict[str, Any] = {
@@ -96,6 +98,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
     def reset_simulation(self) -> None:
         """Resets all simulation trades, counters, active position, and stance back to time 0."""
         self.closed_trades.clear()
+        self.execution_comparisons.clear()
         self.trade_counter = 0
         self.active_trade = None
         self.last_close_ts = 0.0
@@ -325,6 +328,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
         """
         if self.active_trade is None:
             return None
+        self._record_dual_shutdown(self.active_trade)
         interrupted = copy.deepcopy(self.active_trade)
         self.active_trade = None
         is_real = interrupted.get("mode") == "REAL"
@@ -721,6 +725,8 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 "latencies_ms": {},
                 "tx_hash": None,
             }
+            if settings_manager.is_dual_mode:
+                self._begin_dual_comparison(self.active_trade)
             if is_real:
                 self._begin_execution_telemetry(self.active_trade, lighter_state)
                 self._fire_live_open(self.active_trade)
@@ -844,6 +850,8 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 "latencies_ms": {},
                 "tx_hash": None,
             }
+            if settings_manager.is_dual_mode:
+                self._begin_dual_comparison(self.active_trade)
             if is_real:
                 self._begin_execution_telemetry(self.active_trade, lighter_state)
                 self._fire_live_open(self.active_trade)
@@ -930,6 +938,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
             "active_position": self.active_trade,
             "closed_trades": list(self.closed_trades),
             "execution_attempts": self.get_execution_attempts(),
+            "execution_comparisons": self.get_execution_comparisons(),
             "performance": self.get_performance(),
             "trading_mode": settings_manager.trading_mode,
             "is_real_mode": settings_manager.is_real_mode,

@@ -4,7 +4,7 @@ System Health, Connection Status, and SSE Streaming Endpoints.
 import json
 import asyncio
 import time
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from app.core.state_manager import state_manager
 from app.core.dashboard_payload import (
@@ -126,4 +126,7 @@ async def sse_event_stream():
 @router.post("/reset-simulation", summary="Reset simulation state to start from zero")
 async def reset_simulation():
     """Resets the simulation: wipes paper trades, decision stance, and resets starting balance."""
-    return await state_manager.reset_simulation()
+    result = await state_manager.reset_simulation()
+    if result.get("status") != "ok":
+        raise HTTPException(status_code=409, detail=result.get("message", "Simulation reset is unavailable."))
+    return result

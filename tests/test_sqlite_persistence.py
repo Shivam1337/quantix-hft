@@ -26,6 +26,7 @@ class SqlitePersistenceTests(unittest.TestCase):
             self.assertEqual([], snapshot["chart_samples"])
             self.assertEqual([], snapshot["closed_trades"])
             self.assertEqual([], snapshot["repricing_events"])
+            self.assertEqual([], snapshot["execution_comparisons"])
 
             # Record samples
             store.record_chart_sample({"time": "2026-09-06T00:00:00Z", "binance": 50000.0})
@@ -47,13 +48,22 @@ class SqlitePersistenceTests(unittest.TestCase):
                     "spread_closed": True,
                 },
             })
+            store.record_event({
+                "transition": "DUAL_EXECUTION_COMPARISON",
+                "event": {
+                    "comparison_id": 1,
+                    "status": "COMPLETE",
+                    "simulated": {"net_pnl": 0.45},
+                    "real": {"net_pnl": 0.40},
+                },
+            })
             store.record_decision({
                 "stance": "SIGNAL_DETECTED",
                 "action": "SNIPE_LONG",
             })
 
             await store.stop()
-            self.assertEqual(4, store.records_written)
+            self.assertEqual(5, store.records_written)
             self.assertEqual(0, store.records_failed)
 
             # Test hydration on new store instance
@@ -65,6 +75,8 @@ class SqlitePersistenceTests(unittest.TestCase):
             self.assertEqual(1, snapshot2["closed_trades"][0]["id"])
             self.assertEqual(1, len(snapshot2["repricing_events"]))
             self.assertTrue(snapshot2["repricing_events"][0]["spread_closed"])
+            self.assertEqual(1, len(snapshot2["execution_comparisons"]))
+            self.assertEqual("COMPLETE", snapshot2["execution_comparisons"][0]["status"])
             await store2.stop()
 
         asyncio.run(run())
@@ -237,4 +249,3 @@ class SqlitePersistenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

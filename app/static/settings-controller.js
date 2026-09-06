@@ -16,7 +16,7 @@ export function renderTradingActivityControl(enabled) {
   if (input) input.checked = enabled;
   control?.classList.toggle('paused', !enabled);
   setText(label, enabled ? 'Trading Activity Enabled' : 'Trading Activity Paused');
-  setText(description, enabled ? 'New REAL and simulation entries may be submitted.' : 'New REAL and simulation entries are blocked. Existing live exposure remains risk-managed.');
+  setText(description, enabled ? 'New simulation, REAL, and paired DUAL entries may be submitted.' : 'New simulation, REAL, and paired DUAL entries are blocked. Existing live exposure remains risk-managed.');
   if (alert) {
     alert.className = `settings-alert ${enabled ? 'success' : 'paused'}`;
     setText(alert, enabled ? '✅ Global entry control is enabled for the selected execution mode.' : '🛑 Global pause is active. Market data stays online, but no new orders or paper trades can start.');
@@ -27,9 +27,12 @@ export function selectTradingMode(mode, showWarning = true) {
   selectedMode = mode;
   const simulation = document.getElementById('mode-card-sim');
   const real = document.getElementById('mode-card-real');
-  simulation?.classList.toggle('active', mode !== 'REAL');
+  const dual = document.getElementById('mode-card-dual');
+  simulation?.classList.toggle('active', mode === 'SIMULATION');
   real?.classList.toggle('active', mode === 'REAL');
+  dual?.classList.toggle('active', mode === 'DUAL');
   if (mode === 'REAL' && showWarning) showToast('Selected REAL Mode: Click Save & Apply to activate live trading.', 'info');
+  if (mode === 'DUAL' && showWarning) showToast('Selected DUAL Mode: matching simulated controls will be recorded for each live order.', 'info');
 }
 
 export function renderSettingsView(data) {
@@ -56,7 +59,7 @@ export function renderSettingsView(data) {
   const alert = document.getElementById('mode-status-alert');
   if (alert) {
     alert.className = `settings-alert ${data.is_real_eligible ? 'success' : 'warning'}`;
-    setText(alert, data.is_real_eligible ? `✅ Account ready for REAL mode on Lighter ${String(data.network).toUpperCase()}!` : `ℹ️ ${data.eligibility_message || 'Setup wallet and Lighter account to enable REAL trading.'}`);
+    setText(alert, data.is_real_eligible ? `✅ Account ready for REAL or DUAL mode on Lighter ${String(data.network).toUpperCase()}!` : `ℹ️ ${data.eligibility_message || 'Setup wallet and Lighter account to enable REAL or DUAL trading.'}`);
   }
 }
 
@@ -131,7 +134,7 @@ export async function saveSystemSettings() {
 
 export async function confirmResetSimulation() {
   const balance = parseFloat(inputValue('setting-sim-starting-balance')) || 100;
-  const message = `Are you sure you want to reset the simulation system?\n\n• All paper trades and history will be cleared.\n• Performance and PnL will be reset to 0.\n• Simulation account balance will be restarted at $${balance.toFixed(2)}.\n• A new simulation run will be started from time 0.`;
+  const message = `Are you sure you want to reset the simulation system?\n\n• All paper trades and DUAL comparison history will be cleared.\n• Simulation performance and PnL will be reset to 0.\n• Simulation account balance will be restarted at $${balance.toFixed(2)}.\n• The reset is blocked while a live Lighter order or position is active.`;
   if (!window.confirm(message)) return;
   setText('reset-sim-feedback', 'Resetting system...');
   try {

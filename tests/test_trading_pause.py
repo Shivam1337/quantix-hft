@@ -58,7 +58,7 @@ class TradingPauseEngineTests(unittest.TestCase):
         }
 
     def test_pause_blocks_new_entries_in_simulation_and_real_modes(self):
-        for mode in ("SIMULATION", "REAL"):
+        for mode in ("SIMULATION", "REAL", "DUAL"):
             settings_manager._settings["trading_mode"] = mode
             engine = SniperEngine()
 

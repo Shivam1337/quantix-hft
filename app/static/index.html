@@ -404,7 +404,30 @@
 
       <!-- Right Column: Repricing Catch-up Cycles -->
       <div class="tables-col-right">
-        <div class="table-block table-block-tall">
+        <div class="table-block">
+          <div class="table-header">
+            <span class="table-title">DUAL Execution: Simulated vs Real</span>
+            <span class="table-sub mono">GET /api/trades/comparisons</span>
+          </div>
+          <div class="table-scroll">
+            <table class="divided-table">
+              <thead>
+                <tr>
+                  <th>Signal / Status</th>
+                  <th>Simulated L2 Fill</th>
+                  <th>Real Lighter Fill</th>
+                  <th>Fill / Latency</th>
+                  <th>Δ PnL</th>
+                </tr>
+              </thead>
+              <tbody id="dual-comparisons-table-body">
+                <tr><td colspan="5" style="color: var(--text-muted); text-align: center;">DUAL mode is not active. No matched executions yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="table-block table-block-bottom">
           <div class="table-header">
             <span class="table-title">Repricing Catch-Up Cycles</span>
             <span class="table-sub mono">GET /api/analytics/repricing-events</span>
@@ -579,7 +602,7 @@
             <div class="global-trading-row">
               <div>
                 <div class="global-trading-label" id="trading-activity-label">Trading Activity Enabled</div>
-                <div class="global-trading-description" id="trading-activity-description">New REAL and simulation entries may be submitted.</div>
+                <div class="global-trading-description" id="trading-activity-description">New simulation, REAL, and paired DUAL entries may be submitted.</div>
               </div>
               <label class="toggle-switch" title="Pause or resume new trading entries">
                 <input id="setting-trading-enabled" type="checkbox" checked onchange="toggleTradingActivity(this.checked)" aria-label="Enable or pause global trading activity" />
@@ -605,6 +628,13 @@
                 <div>
                   <div class="mode-card-name">🟢 REAL (Live Lighter Execution)</div>
                   <div class="mode-card-desc">Active capital. Signs and submits real IOC market orders to zkLighter sequencer with 0% fees. Requires funded account index and API key.</div>
+                </div>
+              </div>
+              <div class="mode-card" id="mode-card-dual" onclick="selectTradingMode('DUAL')">
+                <div class="mode-card-radio"><span class="radio-dot"></span></div>
+                <div>
+                  <div class="mode-card-name">🟣 DUAL (Live + Matched Simulation)</div>
+                  <div class="mode-card-desc">Submits the configured real IOC order and records a same-signal L2-ladder simulated fill. Compare fill ratio, latency, slippage, and P&amp;L without mixing the two ledgers.</div>
                 </div>
               </div>
             </div>
@@ -676,7 +706,7 @@
           <div class="settings-section" style="border-color: rgba(239, 68, 68, 0.35);">
             <div class="settings-section-title" style="color: var(--red);">⚠️ Simulation Lifecycle & System Reset</div>
             <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 14px; line-height: 1.5;">
-              Reset the entire simulation system back to time 0. This clears all historical paper trades, repricing cycles, performance metrics, and restarts the sniper engine with your configured starting balance.
+              Reset the entire simulation system back to time 0. This clears historical paper trades, DUAL comparison history, repricing cycles, and simulation metrics. It is blocked while a live Lighter order or position is active.
             </p>
             <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
               <button class="btn btn-danger" onclick="confirmResetSimulation()">🔄 Reset Simulation to Initial State</button>
@@ -727,6 +757,7 @@
                 <button class="q-btn" onclick="selectAndQueryApi('/api/trades/decision', 'Trade Decision & Stance')">GET /api/trades/decision</button>
                 <button class="q-btn" onclick="selectAndQueryApi('/api/trades/performance', 'Trading Performance & PnL')">GET /api/trades/performance</button>
                 <button class="q-btn" onclick="selectAndQueryApi('/api/trades/history', 'Recent Sniper Trades')">GET /api/trades/history</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/trades/comparisons', 'DUAL Simulated vs Real Executions')">GET /api/trades/comparisons</button>
                 <button class="q-btn" onclick="selectAndQueryApi('/api/analytics/repricing-events', 'Repricing Catch-Up Cycles')">GET /api/analytics/repricing-events</button>
               </div>
             </div>

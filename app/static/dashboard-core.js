@@ -35,8 +35,9 @@ function updateMode(data) {
   if (!box || !label) return;
   box.classList.toggle('mode-paused', !enabled);
   box.classList.toggle('mode-real', enabled && mode === 'REAL');
+  box.classList.toggle('mode-dual', enabled && mode === 'DUAL');
   setText(label, enabled ? mode : 'PAUSED');
-  setText(sub, !enabled ? `${mode} · New entries blocked` : mode === 'REAL' ? 'Active On-Chain zkLighter' : 'Paper Trading (0 Risk)');
+  setText(sub, !enabled ? `${mode} · New entries blocked` : mode === 'DUAL' ? 'Live + matched simulation' : mode === 'REAL' ? 'Active On-Chain zkLighter' : 'Paper Trading (0 Risk)');
 }
 
 function updateDecision(data) {
@@ -68,7 +69,8 @@ function updateActivePosition(position) {
   const size = position.size_btc ?? position.size;
   const notional = position.notional_usd || Number(size || 0) * Number(price || 0);
   const color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-  setHtml('pos-details', `<strong>${position.side || '--'}</strong> vs ${position.leader_name || position.leader || 'Leader'} | <span style="color: var(--lighter-color);">${size || '--'} BTC</span> ($${fmt(notional, 0)} @ ${position.leverage || 50}x) | Margin: <strong>$${fmt(position.margin_allocated_usd || 0, 2)}</strong> | Entry: <strong>$${fmt(price, 1)}</strong> | Target: <strong>$${fmt(position.target_price ?? position.target_px, 1)}</strong> | Hold: <strong>${position.hold_seconds || 0}s</strong> | Floating PnL: <strong style="color: ${color};">${pnl >= 0 ? '+' : ''}$${fmt(pnl, 2)}</strong>`);
+  const dual = position.dual_execution ? '<span style="color: var(--purple);">DUAL CONTROL</span> · ' : '';
+  setHtml('pos-details', `${dual}<strong>${position.side || '--'}</strong> vs ${position.leader_name || position.leader || 'Leader'} | <span style="color: var(--lighter-color);">${size || '--'} BTC</span> ($${fmt(notional, 0)} @ ${position.leverage || 50}x) | Margin: <strong>$${fmt(position.margin_allocated_usd || 0, 2)}</strong> | Entry: <strong>$${fmt(price, 1)}</strong> | Target: <strong>$${fmt(position.target_price ?? position.target_px, 1)}</strong> | Hold: <strong>${position.hold_seconds || 0}s</strong> | Floating PnL: <strong style="color: ${color};">${pnl >= 0 ? '+' : ''}$${fmt(pnl, 2)}</strong>`);
 }
 
 function updatePerformance(performance, market) {

@@ -16,7 +16,7 @@ def build_performance(
     real_account: Mapping[str, Any],
 ) -> Dict[str, Any]:
     """Return mode-scoped performance without mixing simulation and real fills."""
-    is_real = mode == "REAL"
+    is_real = mode in {"REAL", "DUAL"}
     trades = [
         trade for trade in closed_trades
         if (str(trade.get("mode", "")).upper() == "REAL") == is_real
@@ -67,7 +67,11 @@ def build_performance(
         "is_real_mode": is_real,
         "paper_only": not is_real,
         "account_data_available": account["available"],
-        "metrics_scope": "CONFIRMED_REAL_STRATEGY" if is_real else "SIMULATION",
+        "metrics_scope": (
+            "CONFIRMED_REAL_STRATEGY_WITH_SIMULATION_CONTROL"
+            if mode == "DUAL"
+            else "CONFIRMED_REAL_STRATEGY" if is_real else "SIMULATION"
+        ),
         "cost_model": "Confirmed Lighter account and IOC fills; no Lighter fee is applied." if is_real else "Displayed L2-ladder paper model with 50x leverage on Lighter.xyz (0% fees).",
     }
 

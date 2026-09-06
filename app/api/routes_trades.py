@@ -45,6 +45,13 @@ async def get_execution_attempts():
     return {"total_attempts": len(attempts), "attempts": attempts}
 
 
+@router.get("/comparisons", summary="Query matched DUAL simulated versus real executions")
+async def get_execution_comparisons():
+    """Returns bounded, same-signal L2-paper and confirmed-live execution pairs."""
+    comparisons = state_manager.sniper_engine.get_execution_comparisons()
+    return {"total_comparisons": len(comparisons), "comparisons": comparisons}
+
+
 @router.get("/performance", summary="Query cumulative trading performance")
 async def get_trading_performance():
     """

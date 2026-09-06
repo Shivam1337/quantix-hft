@@ -1,13 +1,19 @@
 # BTC Perpetual Lead-Lag Measurement Experiment
 
-This project is a paper-only experiment for the hypothesis that Lighter's BTC
-perpetual executable quote sometimes follows a confirmed move on major venues.
-It does not place orders or establish a profitable trading edge.
+This project defaults to a paper-trading experiment for the hypothesis that
+Lighter's BTC perpetual executable quote sometimes follows a confirmed move on
+major venues. It does not establish a profitable trading edge.
+
+`SIMULATION` is the default and submits no live orders. `REAL` and `DUAL` are
+explicit opt-in modes that require a funded Lighter account index and API key.
+`DUAL` sends the configured live IOC order while recording a same-signal,
+L2-ladder simulated control so fill ratio, latency, price penalty, and PnL can
+be compared without mixing paper results into the real ledger.
 
 ## Deploy the complete system with Docker Compose
 
-Docker Compose is the supported deployment path. It starts the paper-only app
-and PostgreSQL together, keeps both host ports local-only, and stores derived
+Docker Compose is the supported deployment path. It starts the app and
+PostgreSQL together, keeps both host ports local-only, and stores derived
 experiment state in the named PostgreSQL volume.
 
 ```powershell
@@ -93,7 +99,10 @@ python .\inspect_postgres.py
 
 - Binance, Bybit, OKX, and Hyperliquid are the primary discovery venues.
 - Polymarket remains a recorded comparison feed but cannot nominate a signal.
-- A paper signal requires at least three fresh major venues moving together.
+- An entry signal requires at least three fresh major venues moving together.
+- DUAL comparisons use the identical entry signal and exit trigger for both
+  legs; the simulated leg is a control for execution quality, not a second
+  strategy or a second live order.
 - New runs never write raw incoming WebSocket messages, full order-book updates,
   or every individual quote. Only bounded derived state is persisted.
 - A closed spread is classified as `LIGHTER_CATCHUP`, `LEADER_REVERSAL`,

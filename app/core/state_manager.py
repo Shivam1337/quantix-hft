@@ -88,6 +88,7 @@ class StateManager:
         self._last_persisted_chart_sample_monotonic_ns: Optional[int] = None
         self._last_persisted_decision_signature: Optional[tuple] = None
         self._logged_closed_trade_ids: Set[int] = set()
+        self._logged_execution_comparison_signatures: Dict[int, str] = {}
         self._shutting_down = False
         self._shutdown_complete = False
 
@@ -364,6 +365,24 @@ class StateManager:
             self._logged_closed_trade_ids.add(trade_id)
             self.persistence.record_trade(trade)
 
+    def _persist_execution_comparisons(self, summary: Dict[str, Any]) -> None:
+        """Persist only comparison state transitions, never one event per price tick."""
+        for comparison in summary.get("execution_comparisons", []):
+            if not isinstance(comparison, dict):
+                continue
+            try:
+                comparison_id = int(comparison["comparison_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            signature = f"{comparison.get('status')}:{comparison.get('updated_at')}"
+            if self._logged_execution_comparison_signatures.get(comparison_id) == signature:
+                continue
+            self._logged_execution_comparison_signatures[comparison_id] = signature
+            self.persistence.record_event({
+                "transition": "DUAL_EXECUTION_COMPARISON",
+                "event": copy.deepcopy(comparison),
+            })
+
     def _persist_decision_transition(self, summary: Dict[str, Any], analysis: Dict[str, Any]) -> None:
         """Keep only meaningful decision changes, never one record per market message."""
         decision = summary["decision"]
@@ -492,6 +511,7 @@ class StateManager:
         )
         self._persist_analysis_transition(analysis)
         self._persist_closed_trades(summary)
+        self._persist_execution_comparisons(summary)
         self._persist_decision_transition(summary, analysis)
 
         self._record_chart_point(now_monotonic_ns, analysis)
@@ -523,6 +543,33 @@ class StateManager:
         }
         self.lead_lag_analyzer.hydrate_repricing_events(snapshot.get("repricing_events", []))
         self.sniper_engine.hydrate_execution_attempts(snapshot.get("execution_attempts", []))
+        restored_comparisons = list(snapshot.get("execution_comparisons", []))
+        persisted_trade_comparisons = [
+            trade.get("execution_comparison")
+            for trade in restored_trades
+            if isinstance(trade, dict) and isinstance(trade.get("execution_comparison"), dict)
+        ]
+        restored_comparison_ids = {
+            comparison.get("comparison_id")
+            for comparison in restored_comparisons
+            if isinstance(comparison, dict)
+        }
+        restored_comparisons.extend(
+            comparison for comparison in persisted_trade_comparisons
+            if comparison.get("comparison_id") not in restored_comparison_ids
+        )
+        self.sniper_engine.hydrate_execution_comparisons(restored_comparisons)
+        self._logged_execution_comparison_signatures.clear()
+        for comparison in restored_comparisons:
+            if not isinstance(comparison, dict):
+                continue
+            try:
+                comparison_id = int(comparison["comparison_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            self._logged_execution_comparison_signatures.setdefault(
+                comparison_id, f"{comparison.get('status')}:{comparison.get('updated_at')}"
+            )
         await self._sync_settings_and_wallet_with_db()
 
     async def _sync_settings_and_wallet_with_db(self) -> None:
@@ -554,10 +601,18 @@ class StateManager:
         """Resets paper trading history, engine decision stance, chart samples, and simulation state."""
         from app.core.settings_manager import settings_manager
 
+        active_trade = self.sniper_engine.active_trade
+        if active_trade and active_trade.get("mode") == "REAL":
+            return {
+                "status": "blocked",
+                "message": "Cannot reset simulation while a live Lighter order or position is active.",
+            }
+
         self.sniper_engine.reset_simulation()
         self.lead_lag_analyzer.reset_events()
         self.price_history.clear()
         self._logged_closed_trade_ids.clear()
+        self._logged_execution_comparison_signatures.clear()
 
         if self.persistence is not None:
             await self.persistence.reset_simulation_data()
@@ -609,6 +664,7 @@ class StateManager:
                     },
                 }
             )
+            self._persist_execution_comparisons(self.sniper_engine.get_summary())
         await self.persistence.stop()
         self._shutdown_complete = True
 
@@ -646,6 +702,7 @@ class StateManager:
             "trading_enabled": sniper_data["trading_enabled"],
             "recent_trades": sniper_data["closed_trades"][:10],
             "recent_execution_attempts": sniper_data["execution_attempts"][:20],
+            "execution_comparisons": sniper_data["execution_comparisons"][:10],
             "lead_lag_analytics": analysis,
             "recent_repricing_events": self.lead_lag_analyzer.get_repricing_events()[:10],
             "provider_insights": self.get_provider_insights(now_monotonic_ns=now_monotonic_ns),

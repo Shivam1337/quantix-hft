@@ -414,6 +414,7 @@ class PostgresStore:
                     self.run_id,
                     encoded,
                 )
+                return
         raise ValueError(f"Unsupported persistence record type: {kind}")
 
     async def reset_simulation_data(self) -> None:

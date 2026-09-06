@@ -207,6 +207,33 @@ class SqlitePersistenceTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_postgres_store_write_kinds_mocked(self):
+        async def run():
+            class MockConn:
+                async def execute(self, sql, *args):
+                    pass
+
+            class MockPool:
+                def acquire(self):
+                    class Ctx:
+                        async def __aenter__(self):
+                            return MockConn()
+                        async def __aexit__(self, *a):
+                            pass
+                    return Ctx()
+
+            store = PostgresStore(required=False)
+            store._pool = MockPool()
+            store.run_id = "test-run"
+            await store._write("chart", {"p": 1})
+            await store._write("trade", {"id": 1})
+            await store._write("event", {"transition": "SPREAD_CLOSED"})
+            await store._write("decision", {"action": "BUY"})
+            with self.assertRaises(ValueError):
+                await store._write("unknown_kind", {})
+
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()

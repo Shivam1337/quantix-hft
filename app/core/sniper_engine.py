@@ -20,10 +20,19 @@ from app.config import (
     MAX_HOLD_SECONDS,
     MIN_ENTRY_VELOCITY_USD,
     MIN_LAG_TRIGGER,
+    LADDER_MIN_EXPECTED_PROFIT_USD,
+    MAX_EXECUTION_BOOK_LEVELS,
     REVERSAL_INVALIDATION,
     STOP_LOSS_DRAWDOWN,
+    TARGET_EXIT_BUFFER_USD,
     TRADE_MARGIN_FRACTION,
     TRADE_SIZE_BTC,
+)
+from app.core.execution import (
+    MIN_EXECUTABLE_NOTIONAL_USD,
+    ExecutableOrder,
+    calculate_executable_order,
+    calculate_profitable_price_limit,
 )
 from app.core.settings_manager import settings_manager
 from app.core.wallet_manager import wallet_manager
@@ -38,6 +47,9 @@ class SniperEngine:
         self.trade_size_btc = TRADE_SIZE_BTC
         self.stop_loss_drawdown = STOP_LOSS_DRAWDOWN
         self.reversal_invalidation = REVERSAL_INVALIDATION
+        self.target_exit_buffer_usd = TARGET_EXIT_BUFFER_USD
+        self.ladder_min_expected_profit_usd = LADDER_MIN_EXPECTED_PROFIT_USD
+        self.max_execution_book_levels = MAX_EXECUTION_BOOK_LEVELS
 
         # Dynamic Capital & Leverage Management
         self._custom_base_balance_usd: Optional[float] = None
@@ -103,11 +115,11 @@ class SniperEngine:
 
     async def _execute_live_open(self, tr: Dict[str, Any]) -> None:
         from app.core.lighter_client import lighter_client
-        slippage_price = tr["entry_px"] * (1.002 if tr["side"] == "LONG" else 0.998)
+        limit_price = tr.get("execution_price_limit", tr["entry_px"])
         success, tx_hash, err = await lighter_client.open_snipe_order(
             side=tr["side"],
             size_btc=tr["size_btc"],
-            slippage_limit_px=slippage_price,
+            limit_price=limit_price,
             trade_id=tr["id"],
         )
         if success:
@@ -126,11 +138,10 @@ class SniperEngine:
 
     async def _execute_live_close(self, rec: Dict[str, Any]) -> None:
         from app.core.lighter_client import lighter_client
-        slippage_price = rec["exit_px"] * (0.998 if rec["side"] == "LONG" else 1.002)
         success, tx_hash, err = await lighter_client.close_snipe_order(
             side=rec["side"],
             size_btc=rec["size_btc"],
-            slippage_limit_px=slippage_price,
+            limit_price=rec["exit_px"],
             trade_id=rec["id"],
         )
         if success:
@@ -162,6 +173,53 @@ class SniperEngine:
             "notional_usd": notional,
             "account_balance_usd": round(current_balance, 2),
         }
+
+    def _reject_for_unexecutable_depth(
+        self,
+        *,
+        side: str,
+        entry_price: float,
+        leader_name: str,
+        calculated_size: Dict[str, float],
+        executable: ExecutableOrder,
+        timestamp: str,
+    ) -> Dict[str, Any]:
+        """Record why a valid signal did not produce an unsafe, undersized order."""
+        below_notional_floor = (
+            executable.size_btc > 0
+            and executable.limit_notional_usd <= MIN_EXECUTABLE_NOTIONAL_USD
+        )
+        rejection_reason = "BELOW_MINIMUM_NOTIONAL" if below_notional_floor else "INSUFFICIENT_EXECUTABLE_LIQUIDITY"
+        self.current_decision = {
+            "stance": "MONITORING",
+            "action": "NONE",
+            "target_exchange": "Lighter.xyz",
+            "elected_leader": leader_name,
+            "signal_strength_usd": 0.0,
+            "rationale": (
+                f"{side} signal withheld: visible Lighter depth from ${entry_price:,.1f} through "
+                f"the ${executable.profitability_limit_price:,.1f} profitability boundary supports "
+                f"{executable.visible_size_btc:.5f} BTC (${executable.visible_notional_usd:,.2f}); "
+                f"the executable amount is ${executable.notional_usd:,.2f} versus the "
+                f"${calculated_size['notional_usd']:,.2f} cap. Orders require at least "
+                f"0.00010 BTC and strictly more than ${MIN_EXECUTABLE_NOTIONAL_USD:.2f} USDC."
+            ),
+            "rejection_reason": rejection_reason,
+            "target_price": None,
+            "stop_loss_price": None,
+            "timestamp": timestamp,
+            "paper_only": not settings_manager.is_real_mode,
+            "requested_notional_usd": calculated_size["notional_usd"],
+            "executable_size_btc": executable.size_btc,
+            "executable_notional_usd": executable.notional_usd,
+            "visible_liquidity_btc": executable.visible_size_btc,
+            "visible_liquidity_notional_usd": executable.visible_notional_usd,
+            "execution_price_limit": executable.limit_price,
+            "profitability_limit_price": executable.profitability_limit_price,
+            "order_limit_notional_usd": executable.limit_notional_usd,
+            "worst_case_notional_usd": executable.worst_case_notional_usd,
+        }
+        return self.get_summary()
 
     def hydrate_closed_trades(self, trades: List[Dict[str, Any]]) -> None:
         """Restore persisted paper trades so restart does not erase the dashboard history."""
@@ -364,7 +422,7 @@ class SniperEngine:
                 tr["floating_pnl_usd"] = fl_pnl
 
                 # Exit checks for LONG
-                if l_bid >= tr["target_px"] - 1.0:
+                if l_bid >= tr["target_px"] - self.target_exit_buffer_usd:
                     exit_px = l_bid
                     exit_reason = f"TARGET_REACHED (Lighter caught up to {orig_leader} breakout)"
                 elif curr_leader_px is not None and curr_leader_px < orig_entry_leader_px - self.reversal_invalidation:
@@ -384,7 +442,7 @@ class SniperEngine:
                 tr["floating_pnl_usd"] = fl_pnl
 
                 # Exit checks for SHORT
-                if l_ask <= tr["target_px"] + 1.0:
+                if l_ask <= tr["target_px"] + self.target_exit_buffer_usd:
                     exit_px = l_ask
                     exit_reason = f"TARGET_REACHED (Lighter caught down to {orig_leader} breakdown)"
                 elif curr_leader_px is not None and curr_leader_px > orig_entry_leader_px + self.reversal_invalidation:
@@ -426,7 +484,7 @@ class SniperEngine:
                     "mode": "REAL" if is_real else "SIMULATION",
                     "paper_only": not is_real,
                     "tx_hash": tr.get("tx_hash"),
-                    "cost_model": "Live on-chain Lighter execution" if is_real else "Top-of-book paper model only; excludes fill probability, impact, latency, funding, and liquidation costs.",
+                    "cost_model": "Live on-chain Lighter execution" if is_real else "Displayed L2-ladder paper model only; excludes fill probability, impact, latency, funding, and liquidation costs.",
                 }
                 if is_real:
                     self._fire_live_close(closed_rec)
@@ -523,11 +581,36 @@ class SniperEngine:
             and leader_velocity >= self.min_entry_velocity
         )
         if is_long_signal:
-            self.trade_counter += 1
             calc = self.calculate_trade_size(l_ask)
-            trade_size = calc["size_btc"]
-            margin_usd = calc["margin_allocated_usd"]
-            notional_usd = calc["notional_usd"]
+            profitability_limit = calculate_profitable_price_limit(
+                side="LONG",
+                target_price=adj_leader_px,
+                target_exit_buffer_usd=self.target_exit_buffer_usd,
+                minimum_expected_profit_usd=self.ladder_min_expected_profit_usd,
+            )
+            executable = calculate_executable_order(
+                side="LONG",
+                bids=lighter_state.get("bids", []),
+                asks=lighter_state.get("asks", []),
+                limit_price=profitability_limit,
+                notional_cap_usd=calc["notional_usd"],
+                max_levels=self.max_execution_book_levels,
+            )
+            if not executable.meets_minimums:
+                return self._reject_for_unexecutable_depth(
+                    side="LONG",
+                    entry_price=l_ask,
+                    leader_name=leader_name,
+                    calculated_size=calc,
+                    executable=executable,
+                    timestamp=now_str,
+                )
+
+            self.trade_counter += 1
+            trade_size = executable.size_btc
+            notional_usd = executable.notional_usd
+            margin_usd = round(notional_usd / calc["leverage"], 2)
+            entry_px = executable.vwap_price
 
             self.active_trade = {
                 "id": self.trade_counter,
@@ -536,15 +619,23 @@ class SniperEngine:
                 "size": trade_size,
                 "size_btc": trade_size,
                 "margin_allocated_usd": margin_usd,
-                "leverage": self.leverage,
+                "leverage": calc["leverage"],
                 "notional_usd": notional_usd,
-                "entry_px": l_ask,
-                "entry_price": l_ask,
-                "current_price": l_ask,
+                "requested_notional_usd": calc["notional_usd"],
+                "visible_liquidity_btc": executable.visible_size_btc,
+                "visible_liquidity_notional_usd": executable.visible_notional_usd,
+                "execution_price_limit": executable.limit_price,
+                "profitability_limit_price": executable.profitability_limit_price,
+                "order_limit_notional_usd": executable.limit_notional_usd,
+                "worst_case_notional_usd": executable.worst_case_notional_usd,
+                "book_levels_used": executable.levels_used,
+                "entry_px": entry_px,
+                "entry_price": entry_px,
+                "current_price": entry_px,
                 "target_px": adj_leader_px,
                 "target_price": adj_leader_px,
-                "stop_loss_px": l_ask - self.stop_loss_drawdown,
-                "stop_loss_price": l_ask - self.stop_loss_drawdown,
+                "stop_loss_px": entry_px - self.stop_loss_drawdown,
+                "stop_loss_price": entry_px - self.stop_loss_drawdown,
                 "entry_leader_px": leader_px,
                 "adj_leader_entry_px": adj_leader_px,
                 "expected_lag": round(long_lag, 2),
@@ -553,9 +644,9 @@ class SniperEngine:
                 "entry_time": now_str,
                 "hold_seconds": 0.0,
                 "exit_conditions": {
-                    "target": f"Lighter bid >= ${adj_leader_px - 1.0:,.1f}",
+                    "target": f"Lighter bid >= ${adj_leader_px - self.target_exit_buffer_usd:,.1f}",
                     "invalidation": f"{leader_name} < ${leader_px - self.reversal_invalidation:,.1f}",
-                    "hard_stop": f"Lighter bid <= ${l_ask - self.stop_loss_drawdown:,.1f}",
+                    "hard_stop": f"Lighter bid <= ${entry_px - self.stop_loss_drawdown:,.1f}",
                     "timeout": f"{self.max_hold_seconds}s",
                 },
                 "mode": "REAL" if is_real else "SIMULATION",
@@ -571,13 +662,23 @@ class SniperEngine:
                 "target_exchange": "Lighter.xyz (0% Fee DEX)",
                 "elected_leader": leader_name,
                 "signal_strength_usd": round(long_lag, 2),
-                "rationale": f"⚡ Dynamic Leader [{leader_name}] at ${leader_px:,.1f} (velocity: ${leader_velocity:+.1f}) while Lighter Ask lags at ${l_ask:,.1f} (+${long_lag:.2f} dynamic lag, Mode: {settings_manager.trading_mode}). Sniping zero-fee LONG on Lighter (${notional_usd:,.0f} notional @ {self.leverage:.0f}x leverage, margin: ${margin_usd:.2f}).",
+                "rationale": f"⚡ Dynamic Leader [{leader_name}] at ${leader_px:,.1f} (velocity: ${leader_velocity:+.1f}) while Lighter Ask lags at ${l_ask:,.1f} (+${long_lag:.2f} dynamic lag, Mode: {settings_manager.trading_mode}). Sniping {trade_size:.5f} BTC LONG across {executable.levels_used} profitable book level(s) (VWAP ${entry_px:,.1f}, IOC limit ${executable.limit_price:,.1f}, ${notional_usd:,.2f} planned / ${executable.worst_case_notional_usd:,.2f} capped notional, {calc['leverage']:.0f}x, margin: ${margin_usd:.2f}).",
                 "rejection_reason": None,
                 "target_price": adj_leader_px,
-                "stop_loss_price": l_ask - self.stop_loss_drawdown,
+                "stop_loss_price": entry_px - self.stop_loss_drawdown,
                 "timestamp": now_str,
                 "trading_mode": settings_manager.trading_mode,
                 "paper_only": not is_real,
+                "requested_notional_usd": calc["notional_usd"],
+                "executable_notional_usd": notional_usd,
+                "visible_liquidity_btc": executable.visible_size_btc,
+                "visible_liquidity_notional_usd": executable.visible_notional_usd,
+                "execution_price_limit": executable.limit_price,
+                "profitability_limit_price": executable.profitability_limit_price,
+                "order_limit_notional_usd": executable.limit_notional_usd,
+                "worst_case_notional_usd": executable.worst_case_notional_usd,
+                "book_levels_used": executable.levels_used,
+                "entry_vwap_price": entry_px,
             }
             return self.get_summary()
 
@@ -591,11 +692,36 @@ class SniperEngine:
         )
 
         if is_short_signal:
-            self.trade_counter += 1
             calc = self.calculate_trade_size(l_bid)
-            trade_size = calc["size_btc"]
-            margin_usd = calc["margin_allocated_usd"]
-            notional_usd = calc["notional_usd"]
+            profitability_limit = calculate_profitable_price_limit(
+                side="SHORT",
+                target_price=adj_leader_px,
+                target_exit_buffer_usd=self.target_exit_buffer_usd,
+                minimum_expected_profit_usd=self.ladder_min_expected_profit_usd,
+            )
+            executable = calculate_executable_order(
+                side="SHORT",
+                bids=lighter_state.get("bids", []),
+                asks=lighter_state.get("asks", []),
+                limit_price=profitability_limit,
+                notional_cap_usd=calc["notional_usd"],
+                max_levels=self.max_execution_book_levels,
+            )
+            if not executable.meets_minimums:
+                return self._reject_for_unexecutable_depth(
+                    side="SHORT",
+                    entry_price=l_bid,
+                    leader_name=leader_name,
+                    calculated_size=calc,
+                    executable=executable,
+                    timestamp=now_str,
+                )
+
+            self.trade_counter += 1
+            trade_size = executable.size_btc
+            notional_usd = executable.notional_usd
+            margin_usd = round(notional_usd / calc["leverage"], 2)
+            entry_px = executable.vwap_price
 
             self.active_trade = {
                 "id": self.trade_counter,
@@ -604,15 +730,23 @@ class SniperEngine:
                 "size": trade_size,
                 "size_btc": trade_size,
                 "margin_allocated_usd": margin_usd,
-                "leverage": self.leverage,
+                "leverage": calc["leverage"],
                 "notional_usd": notional_usd,
-                "entry_px": l_bid,
-                "entry_price": l_bid,
-                "current_price": l_bid,
+                "requested_notional_usd": calc["notional_usd"],
+                "visible_liquidity_btc": executable.visible_size_btc,
+                "visible_liquidity_notional_usd": executable.visible_notional_usd,
+                "execution_price_limit": executable.limit_price,
+                "profitability_limit_price": executable.profitability_limit_price,
+                "order_limit_notional_usd": executable.limit_notional_usd,
+                "worst_case_notional_usd": executable.worst_case_notional_usd,
+                "book_levels_used": executable.levels_used,
+                "entry_px": entry_px,
+                "entry_price": entry_px,
+                "current_price": entry_px,
                 "target_px": adj_leader_px,
                 "target_price": adj_leader_px,
-                "stop_loss_px": l_bid + self.stop_loss_drawdown,
-                "stop_loss_price": l_bid + self.stop_loss_drawdown,
+                "stop_loss_px": entry_px + self.stop_loss_drawdown,
+                "stop_loss_price": entry_px + self.stop_loss_drawdown,
                 "entry_leader_px": leader_px,
                 "adj_leader_entry_px": adj_leader_px,
                 "expected_lag": round(short_lag, 2),
@@ -621,9 +755,9 @@ class SniperEngine:
                 "entry_time": now_str,
                 "hold_seconds": 0.0,
                 "exit_conditions": {
-                    "target": f"Lighter ask <= ${adj_leader_px + 1.0:,.1f}",
+                    "target": f"Lighter ask <= ${adj_leader_px + self.target_exit_buffer_usd:,.1f}",
                     "invalidation": f"{leader_name} > ${leader_px + self.reversal_invalidation:,.1f}",
-                    "hard_stop": f"Lighter ask >= ${l_bid + self.stop_loss_drawdown:,.1f}",
+                    "hard_stop": f"Lighter ask >= ${entry_px + self.stop_loss_drawdown:,.1f}",
                     "timeout": f"{self.max_hold_seconds}s",
                 },
                 "mode": "REAL" if is_real else "SIMULATION",
@@ -639,13 +773,23 @@ class SniperEngine:
                 "target_exchange": "Lighter.xyz (0% Fee DEX)",
                 "elected_leader": leader_name,
                 "signal_strength_usd": round(short_lag, 2),
-                "rationale": f"⚡ Dynamic Leader [{leader_name}] at ${leader_px:,.1f} (velocity: ${leader_velocity:+.1f}) while Lighter Bid lags at ${l_bid:,.1f} (-${short_lag:.2f} dynamic lag, Mode: {settings_manager.trading_mode}). Sniping zero-fee SHORT on Lighter (${notional_usd:,.0f} notional @ {self.leverage:.0f}x leverage, margin: ${margin_usd:.2f}).",
+                "rationale": f"⚡ Dynamic Leader [{leader_name}] at ${leader_px:,.1f} (velocity: ${leader_velocity:+.1f}) while Lighter Bid lags at ${l_bid:,.1f} (-${short_lag:.2f} dynamic lag, Mode: {settings_manager.trading_mode}). Sniping {trade_size:.5f} BTC SHORT across {executable.levels_used} profitable book level(s) (VWAP ${entry_px:,.1f}, IOC limit ${executable.limit_price:,.1f}, ${notional_usd:,.2f} planned / ${executable.worst_case_notional_usd:,.2f} capped notional, {calc['leverage']:.0f}x, margin: ${margin_usd:.2f}).",
                 "rejection_reason": None,
                 "target_price": adj_leader_px,
-                "stop_loss_price": l_bid + self.stop_loss_drawdown,
+                "stop_loss_price": entry_px + self.stop_loss_drawdown,
                 "timestamp": now_str,
                 "trading_mode": settings_manager.trading_mode,
                 "paper_only": not is_real,
+                "requested_notional_usd": calc["notional_usd"],
+                "executable_notional_usd": notional_usd,
+                "visible_liquidity_btc": executable.visible_size_btc,
+                "visible_liquidity_notional_usd": executable.visible_notional_usd,
+                "execution_price_limit": executable.limit_price,
+                "profitability_limit_price": executable.profitability_limit_price,
+                "order_limit_notional_usd": executable.limit_notional_usd,
+                "worst_case_notional_usd": executable.worst_case_notional_usd,
+                "book_levels_used": executable.levels_used,
+                "entry_vwap_price": entry_px,
             }
             return self.get_summary()
 
@@ -727,7 +871,7 @@ class SniperEngine:
                 "trading_mode": mode,
                 "is_real_mode": is_real,
                 "paper_only": not is_real,
-                "cost_model": "Live on-chain Lighter execution" if is_real else "Top-of-book paper model with 50x leverage on Lighter.xyz (0% fees).",
+                "cost_model": "Live on-chain Lighter execution" if is_real else "Displayed L2-ladder paper model with 50x leverage on Lighter.xyz (0% fees).",
             }
 
         wins = sum(1 for t in self.closed_trades if t["is_win"])
@@ -762,7 +906,7 @@ class SniperEngine:
             "trading_mode": mode,
             "is_real_mode": is_real,
             "paper_only": not is_real,
-            "cost_model": "Live on-chain Lighter execution" if is_real else "Top-of-book paper model with 50x leverage on Lighter.xyz (0% fees).",
+            "cost_model": "Live on-chain Lighter execution" if is_real else "Displayed L2-ladder paper model with 50x leverage on Lighter.xyz (0% fees).",
         }
 
     def get_summary(self) -> Dict[str, Any]:

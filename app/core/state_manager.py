@@ -272,9 +272,33 @@ class StateManager:
         exchange_timestamp_ms: Any = None,
         sequence: Any = None,
     ) -> None:
+        if best_bid <= 0 or best_ask <= 0:
+            self.reset_lighter_orderbook(status=status)
+            return
         self._update_quote(
             venue="Lighter.xyz", state=self.lighter, bids=bids, asks=asks, best_bid=best_bid,
             best_ask=best_ask, status=status, exchange_timestamp_ms=exchange_timestamp_ms, sequence=sequence,
+        )
+
+    def reset_lighter_orderbook(self, status: str = "CONNECTING...") -> None:
+        """Invalidate Lighter prices and sizes until a fresh book snapshot arrives."""
+        if self._shutting_down:
+            return
+        self._set_feed_status("Lighter.xyz", self.lighter, status)
+        self.lighter.update(
+            {
+                "bids": [],
+                "asks": [],
+                "best_bid": 0.0,
+                "best_ask": 0.0,
+                "mid_price": 0.0,
+                "spread": 0.0,
+                "last_update_monotonic_ns": None,
+                "last_update_wall_ns": None,
+                "last_update_utc": None,
+                "exchange_timestamp_ms": None,
+                "source_sequence": None,
+            }
         )
 
     def update_poly(

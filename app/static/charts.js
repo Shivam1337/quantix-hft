@@ -54,6 +54,12 @@
       this.requestDraw();
     }
 
+    setThresholds(thresholds) {
+      this.options.thresholds = Array.isArray(thresholds) ? thresholds : [];
+      this.lastSignature = null;
+      this.requestDraw();
+    }
+
     requestDraw() {
       if (this.frameHandle !== null) return;
       const draw = () => {

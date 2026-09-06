@@ -217,14 +217,13 @@ async def lighter_ws_task(session: ClientSession):
     Lighter.xyz BTC Perpetual WebSocket listener (<25ms latency).
     Maintains an in-memory L2 order book supporting both initial snapshots and delta updates.
     """
-    bids_map = {}
-    asks_map = {}
-
     while True:
         try:
+            bids_map = {}
+            asks_map = {}
             async with session.ws_connect(LIGHTER_WS_URL, timeout=5.0) as ws:
                 await ws.send_str(json.dumps(LIGHTER_SUB_PAYLOAD))
-                state_manager.update_lighter([], [], 0.0, 0.0, status="WS STREAMING")
+                state_manager.reset_lighter_orderbook(status="WS STREAMING")
 
                 last_ping = time.time()
                 while not ws.closed:
@@ -288,7 +287,7 @@ async def lighter_ws_task(session: ClientSession):
             break
         except Exception as e:
             logger.warning("Lighter feed reconnecting: %s", e)
-            state_manager.update_lighter([], [], 0.0, 0.0, status="WS RECONNECTING...")
+            state_manager.reset_lighter_orderbook(status="WS RECONNECTING...")
             await asyncio.sleep(1.0)
 
 

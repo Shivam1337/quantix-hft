@@ -45,6 +45,15 @@ class RecordingDerivedStore:
 
 
 class LeadLagExperimentTests(unittest.TestCase):
+    def setUp(self):
+        from app.core.settings_manager import settings_manager
+        settings_manager.update_settings({
+            "simulation_starting_balance": 100.0,
+            "trade_margin_fraction": 0.50,
+            "leverage": 50.0,
+            "min_lag_trigger": 6.0,
+        })
+
     @staticmethod
     def tick(analyzer, now, bn=100.0, by=100.0, ok=100.0, hl=100.0, lighter=100.0, poly=100.0):
         return analyzer.process_tick(bn, by, ok, hl, lighter, poly, now=now)

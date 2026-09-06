@@ -5,6 +5,11 @@ function fmt(n, d = 2) {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
+function topBookSize(levels) {
+  const value = Array.isArray(levels) && Array.isArray(levels[0]) ? Number(levels[0][1]) : NaN;
+  return Number.isFinite(value) && value > 0 ? `${fmt(value, 5)} BTC` : '-- BTC';
+}
+
 function fmtBytes(value) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '--';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -57,13 +62,28 @@ const lagChart = typeof CanvasLineChart === 'function'
       { id: 'lighterLag', label: 'Lighter vs leader', color: '#f59e0b', lineWidth: 2.5 },
     ],
     thresholds: [
-      { value: 6.0, label: 'SNIPE ZONE (+$6)', color: '#10e598' },
+      { value: 6.0, label: 'SHORT SNIPE (+$6)', color: '#ff4d6d' },
       { value: 0.0, label: 'PARITY ($0)', color: '#64748b' },
+      { value: -6.0, label: 'LONG SNIPE (-$6)', color: '#10e598' },
     ],
     yFormatter: (value) => `${value >= 0 ? '+' : ''}$${value.toFixed(2)}`,
     emptyMessage: 'Waiting for Lighter and leader samples…',
   })
   : null;
+
+function updateLagChartThresholds(minLag) {
+  if (!lagChart || typeof lagChart.setThresholds !== 'function') return;
+  const lagVal = Math.abs(parseFloat(minLag)) || 6.0;
+  lagChart.setThresholds([
+    { value: lagVal, label: `SHORT SNIPE (+$${lagVal.toFixed(1)})`, color: '#ff4d6d' },
+    { value: 0.0, label: 'PARITY ($0)', color: '#64748b' },
+    { value: -lagVal, label: `LONG SNIPE (-$${lagVal.toFixed(1)})`, color: '#10e598' },
+  ]);
+  const titleEl = document.getElementById('lag-chart-title');
+  if (titleEl) {
+    titleEl.textContent = `LIGHTER.XYZ LAG VS DYNAMIC LEADER & SNIPE THRESHOLDS (±$${lagVal.toFixed(2)})`;
+  }
+}
 
 // Real-time EventSource Stream
 const evtSource = new EventSource('/api/system/stream');
@@ -370,6 +390,8 @@ function updateDashboard(data) {
     document.getElementById('lighter-price').innerText = `$${fmt(l.mid_price, 1)}`;
     document.getElementById('lighter-bid').innerText = `$${fmt(l.best_bid, 1)}`;
     document.getElementById('lighter-ask').innerText = `$${fmt(l.best_ask, 1)}`;
+    setText('lighter-bid-size', topBookSize(l.bids));
+    setText('lighter-ask-size', topBookSize(l.asks));
     const lSign = (l.lag_vs_leader || 0) >= 0 ? '+' : '';
     document.getElementById('lighter-lag-sub').innerText = `Lag vs Leader: ${lSign}$${fmt(l.lag_vs_leader || 0, 2)} (${lSign}${l.lag_bps || 0} bps)`;
     document.getElementById('lighter-spread').innerText = `$${fmt(l.spread, 2)}`;
@@ -892,6 +914,7 @@ function renderSettingsView(data) {
 
   const minLagEl = document.getElementById('setting-min-lag');
   if (minLagEl) minLagEl.value = data.min_lag_trigger ?? 6.0;
+  if (data.min_lag_trigger !== undefined) updateLagChartThresholds(data.min_lag_trigger);
 
   const maxHoldEl = document.getElementById('setting-max-hold');
   if (maxHoldEl) maxHoldEl.value = data.max_hold_seconds ?? 12.0;

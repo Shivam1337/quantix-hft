@@ -5,8 +5,10 @@ Supports both Mainnet (Chain ID 304) and Testnet (Chain ID 300).
 """
 import logging
 import asyncio
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Optional, Tuple, Dict, Any
 import lighter
+from app.core.execution import MIN_EXECUTABLE_NOTIONAL_USD
 from app.core.settings_manager import settings_manager
 
 logger = logging.getLogger("lighter_client")
@@ -14,6 +16,7 @@ logger = logging.getLogger("lighter_client")
 BTC_MARKET_INDEX = 1
 BTC_SIZE_DECIMALS = 5   # 10^5 multiplier
 BTC_PRICE_DECIMALS = 1  # 10^1 multiplier
+MIN_ORDER_NOTIONAL = Decimal(str(MIN_EXECUTABLE_NOTIONAL_USD))
 
 
 class LighterClient:
@@ -57,16 +60,39 @@ class LighterClient:
             logger.error("Failed to initialize Lighter SignerClient: %s", e)
             return None
 
+    @staticmethod
+    def _validate_order_values(size_btc: float, limit_price: float) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+        """Convert order values without rounding a requested quantity above its risk cap."""
+        try:
+            size = Decimal(str(size_btc))
+            price = Decimal(str(limit_price))
+        except (InvalidOperation, TypeError, ValueError):
+            return None, None, "Order size and limit price must be valid numbers."
+        if not size.is_finite() or not price.is_finite() or size <= 0 or price <= 0:
+            return None, None, "Order size and limit price must be positive."
+
+        base_amount = int((size * (10 ** BTC_SIZE_DECIMALS)).to_integral_value(rounding=ROUND_DOWN))
+        scaled_price = price * (10 ** BTC_PRICE_DECIMALS)
+        if scaled_price != scaled_price.to_integral_value():
+            return None, None, "Limit price does not match Lighter's 0.1 USD price increment."
+        if base_amount <= 0:
+            return None, None, "Order size is below Lighter's minimum base-unit precision."
+
+        executable_size = Decimal(base_amount) / (10 ** BTC_SIZE_DECIMALS)
+        if executable_size * price <= MIN_ORDER_NOTIONAL:
+            return None, None, "Order notional must be strictly greater than 10.00 USDC."
+        return base_amount, int(scaled_price), None
+
     async def open_snipe_order(
         self,
         *,
         side: str,
         size_btc: float,
-        slippage_limit_px: float,
+        limit_price: float,
         trade_id: int,
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Executes a live market IOC snipe order on Lighter.xyz.
+        Executes a live market IOC snipe order bounded by the displayed-price limit.
         Returns: (success: bool, tx_hash: Optional[str], error_message: Optional[str])
         """
         async with self._lock:
@@ -75,8 +101,9 @@ class LighterClient:
                 return False, None, "SignerClient not initialized: check account index and API key."
 
             is_ask = (side.upper() == "SHORT")
-            base_amount = int(round(size_btc * (10 ** BTC_SIZE_DECIMALS)))
-            price = int(round(slippage_limit_px * (10 ** BTC_PRICE_DECIMALS)))
+            base_amount, price, validation_error = self._validate_order_values(size_btc, limit_price)
+            if validation_error:
+                return False, None, validation_error
 
             try:
                 tx, resp, err = await signer.create_order(
@@ -96,7 +123,10 @@ class LighterClient:
                     return False, None, str(err)
 
                 tx_hash = resp.tx_hash if hasattr(resp, "tx_hash") else str(resp)
-                logger.info("Live Lighter order submitted! Trade #%s, side=%s, size=%s BTC, tx=%s", trade_id, side, size_btc, tx_hash)
+                logger.info(
+                    "Live Lighter order submitted! Trade #%s, side=%s, size=%s BTC, limit=%s, tx=%s",
+                    trade_id, side, size_btc, limit_price, tx_hash,
+                )
                 return True, tx_hash, None
             except Exception as exc:
                 logger.exception("Exception submitting Lighter live order: %s", exc)
@@ -107,11 +137,11 @@ class LighterClient:
         *,
         side: str,
         size_btc: float,
-        slippage_limit_px: float,
+        limit_price: float,
         trade_id: int,
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Executes a live market IOC reduce-only exit order on Lighter.xyz.
+        Executes a live market IOC reduce-only exit bounded by the displayed-price limit.
         Returns: (success: bool, tx_hash: Optional[str], error_message: Optional[str])
         """
         async with self._lock:
@@ -121,8 +151,9 @@ class LighterClient:
 
             # Closing a LONG means selling (is_ask = True); closing a SHORT means buying (is_ask = False)
             is_ask = (side.upper() == "LONG")
-            base_amount = int(round(size_btc * (10 ** BTC_SIZE_DECIMALS)))
-            price = int(round(slippage_limit_px * (10 ** BTC_PRICE_DECIMALS)))
+            base_amount, price, validation_error = self._validate_order_values(size_btc, limit_price)
+            if validation_error:
+                return False, None, validation_error
 
             try:
                 tx, resp, err = await signer.create_order(

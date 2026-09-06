@@ -41,6 +41,11 @@ MAX_HOLD_SECONDS = 12.0       # Max duration to hold a snipe position if target 
 COOLDOWN_SECONDS = 2.0        # Seconds to wait after trade exit before entering next trade
 STOP_LOSS_DRAWDOWN = 20.0     # Hard stop loss if position moves $20 against us
 REVERSAL_INVALIDATION = 4.0   # If leader moves $4 back past entry, signal was a false breakout
+# A ladder may consume a few immediate L2 levels, but must retain a positive
+# expected edge beyond the conservative target-exit threshold.
+TARGET_EXIT_BUFFER_USD = max(0.0, float(os.getenv("TARGET_EXIT_BUFFER_USD", "1.0")))
+LADDER_MIN_EXPECTED_PROFIT_USD = max(0.1, float(os.getenv("LADDER_MIN_EXPECTED_PROFIT_USD", "1.0")))
+MAX_EXECUTION_BOOK_LEVELS = max(1, min(3, int(os.getenv("MAX_EXECUTION_BOOK_LEVELS", "3"))))
 
 # Capital Management & Leverage Parameters
 ACCOUNT_BASE_BALANCE_USD = float(os.getenv("ACCOUNT_BASE_BALANCE_USD", "100.0"))  # Base account equity ($100)

@@ -46,6 +46,13 @@ REVERSAL_INVALIDATION = 4.0   # If leader moves $4 back past entry, signal was a
 TARGET_EXIT_BUFFER_USD = max(0.0, float(os.getenv("TARGET_EXIT_BUFFER_USD", "1.0")))
 LADDER_MIN_EXPECTED_PROFIT_USD = max(0.1, float(os.getenv("LADDER_MIN_EXPECTED_PROFIT_USD", "1.0")))
 MAX_EXECUTION_BOOK_LEVELS = max(1, min(3, int(os.getenv("MAX_EXECUTION_BOOK_LEVELS", "3"))))
+# Consume only this fraction of each profitable L2 level and of the configured
+# notional cap. This leaves visible depth for normal book churn while retaining
+# the same IOC price/profit boundary.
+EXECUTION_LIQUIDITY_PARTICIPATION = min(
+    1.0,
+    max(0.0, float(os.getenv("EXECUTION_LIQUIDITY_PARTICIPATION", "0.50"))),
+)
 
 # Capital Management & Leverage Parameters
 ACCOUNT_BASE_BALANCE_USD = float(os.getenv("ACCOUNT_BASE_BALANCE_USD", "100.0"))  # Base account equity ($100)

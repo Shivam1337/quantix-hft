@@ -20,6 +20,7 @@ from app.config import (
     MIN_ENTRY_VELOCITY_USD,
     MIN_LAG_TRIGGER,
     LADDER_MIN_EXPECTED_PROFIT_USD,
+    EXECUTION_LIQUIDITY_PARTICIPATION,
     MAX_EXECUTION_BOOK_LEVELS,
     REVERSAL_INVALIDATION,
     STOP_LOSS_DRAWDOWN,
@@ -52,6 +53,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
         self.target_exit_buffer_usd = TARGET_EXIT_BUFFER_USD
         self.ladder_min_expected_profit_usd = LADDER_MIN_EXPECTED_PROFIT_USD
         self.max_execution_book_levels = MAX_EXECUTION_BOOK_LEVELS
+        self.execution_liquidity_participation = EXECUTION_LIQUIDITY_PARTICIPATION
 
         # Dynamic Capital & Leverage Management
         self._custom_base_balance_usd: Optional[float] = None
@@ -648,6 +650,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 limit_price=profitability_limit,
                 notional_cap_usd=calc["notional_usd"],
                 max_levels=self.max_execution_book_levels,
+                liquidity_participation=self.execution_liquidity_participation,
             )
             if not executable.meets_minimums:
                 return self._reject_for_unexecutable_depth(
@@ -767,6 +770,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 limit_price=profitability_limit,
                 notional_cap_usd=calc["notional_usd"],
                 max_levels=self.max_execution_book_levels,
+                liquidity_participation=self.execution_liquidity_participation,
             )
             if not executable.meets_minimums:
                 return self._reject_for_unexecutable_depth(

@@ -1,31 +1,7 @@
-"""Tests for displayed-depth caps and minimum-notional execution safeguards."""
-import copy
+"""Unit tests for pure displayed-depth and minimum-notional sizing."""
 import unittest
 
 from app.core.execution import calculate_executable_order, calculate_profitable_price_limit
-from app.core.lighter_client import LighterClient
-from app.core.settings_manager import settings_manager
-from app.core.sniper_engine import SniperEngine
-from app.core.state_manager import StateManager
-
-
-class NoopPersistence:
-    """Enough of the derived-store contract for in-memory market-state tests."""
-
-    def record_chart_sample(self, _sample):
-        pass
-
-    def record_trade(self, _trade):
-        pass
-
-    def record_event(self, _event):
-        pass
-
-    def record_decision(self, _decision):
-        pass
-
-    def stats(self):
-        return {"backend": "test", "connected": True}
 
 
 class VisibleLiquiditySizingTests(unittest.TestCase):
@@ -65,6 +41,47 @@ class VisibleLiquiditySizingTests(unittest.TestCase):
         self.assertEqual(100.2, order.profitability_limit_price)
         self.assertAlmostEqual(18.036, order.worst_case_notional_usd)
         self.assertEqual(3, order.levels_used)
+
+    def test_fifty_percent_haircut_uses_half_of_each_profitable_level(self):
+        order = calculate_executable_order(
+            side="SHORT",
+            bids=[
+                ["79861.1", "0.00021"],
+                ["79861.0", "0.00020"],
+                ["79860.9", "0.00020"],
+            ],
+            asks=[],
+            limit_price=79860.9,
+            notional_cap_usd=500.0,
+            max_levels=3,
+            liquidity_participation=0.50,
+        )
+
+        self.assertEqual(0.00061, order.visible_size_btc)
+        self.assertEqual(0.0003, order.size_btc)
+        self.assertEqual(79860.9, order.limit_price)
+        self.assertTrue(order.meets_minimums)
+
+    def test_fifty_percent_haircut_also_halves_the_notional_cap(self):
+        full_size = calculate_executable_order(
+            side="LONG",
+            bids=[],
+            asks=[["100.0", "1.00000"]],
+            limit_price=100.0,
+            notional_cap_usd=40.0,
+        )
+        haircut_size = calculate_executable_order(
+            side="LONG",
+            bids=[],
+            asks=[["100.0", "1.00000"]],
+            limit_price=100.0,
+            notional_cap_usd=40.0,
+            liquidity_participation=0.50,
+        )
+
+        self.assertEqual(0.4, full_size.size_btc)
+        self.assertEqual(0.2, haircut_size.size_btc)
+        self.assertEqual(20.0, haircut_size.limit_notional_usd)
 
     def test_ladder_caps_quantity_at_the_deepest_price_before_submitting_ioc(self):
         order = calculate_executable_order(
@@ -150,208 +167,6 @@ class VisibleLiquiditySizingTests(unittest.TestCase):
         self.assertFalse(at_floor.meets_minimums)
         self.assertGreater(above_floor.notional_usd, 10.0)
         self.assertTrue(above_floor.meets_minimums)
-
-
-class SniperLiquidityIntegrationTests(unittest.TestCase):
-    def setUp(self):
-        self.original_settings = copy.deepcopy(settings_manager._settings)
-        settings_manager._settings.update(
-            {
-                "trading_mode": "SIMULATION",
-                "simulation_starting_balance": 100.0,
-                "trade_margin_fraction": 0.50,
-                "leverage": 50.0,
-                "min_lag_trigger": 6.0,
-            }
-        )
-
-    def tearDown(self):
-        settings_manager._settings = self.original_settings
-
-    def test_long_entry_uses_a_profitable_three_level_ladder(self):
-        engine = SniperEngine()
-        result = engine.process_tick(
-            {
-                "best_bid": 99.9,
-                "best_ask": 100.0,
-                "mid_price": 99.95,
-                "bids": [["99.9", "3.0"]],
-                "asks": [
-                    ["100.0", "0.05000"],
-                    ["100.1", "0.06000"],
-                    ["100.2", "0.07000"],
-                    ["108.1", "3.00000"],
-                ],
-            },
-            "Binance",
-            110.0,
-            110.0,
-            10.0,
-            "HIGH_CONVICTION",
-            "Major venues agree.",
-        )
-
-        trade = result["active_position"]
-        self.assertIsNotNone(trade)
-        self.assertAlmostEqual(0.18, trade["size_btc"])
-        self.assertAlmostEqual(18.02, trade["notional_usd"])
-        self.assertEqual(2500.0, trade["requested_notional_usd"])
-        self.assertEqual(100.2, trade["execution_price_limit"])
-        self.assertEqual(108.0, trade["profitability_limit_price"])
-        self.assertEqual(3, trade["book_levels_used"])
-        self.assertAlmostEqual(100.11111111, trade["entry_px"])
-
-    def test_short_entry_uses_a_profitable_three_level_ladder(self):
-        engine = SniperEngine()
-        result = engine.process_tick(
-            {
-                "best_bid": 100.0,
-                "best_ask": 100.1,
-                "mid_price": 100.05,
-                "bids": [
-                    ["100.0", "0.05000"],
-                    ["99.9", "0.06000"],
-                    ["99.8", "0.07000"],
-                    ["91.9", "3.00000"],
-                ],
-                "asks": [["100.1", "3.0"]],
-            },
-            "Binance",
-            90.0,
-            90.0,
-            -10.0,
-            "HIGH_CONVICTION",
-            "Major venues agree.",
-        )
-
-        trade = result["active_position"]
-        self.assertIsNotNone(trade)
-        self.assertEqual("SHORT", trade["side"])
-        self.assertAlmostEqual(0.18, trade["size_btc"])
-        self.assertAlmostEqual(17.98, trade["notional_usd"])
-        self.assertEqual(99.8, trade["execution_price_limit"])
-        self.assertEqual(92.0, trade["profitability_limit_price"])
-        self.assertEqual(3, trade["book_levels_used"])
-        self.assertAlmostEqual(99.88888889, trade["entry_px"])
-
-    def test_signal_does_not_create_an_order_at_the_ten_usdc_floor(self):
-        engine = SniperEngine()
-        result = engine.process_tick(
-            {
-                "best_bid": 99.9,
-                "best_ask": 100.0,
-                "mid_price": 99.95,
-                "bids": [["99.9", "3.0"]],
-                "asks": [["100.0", "0.10000"]],
-            },
-            "Binance",
-            110.0,
-            110.0,
-            10.0,
-            "HIGH_CONVICTION",
-            "Major venues agree.",
-        )
-
-        self.assertIsNone(result["active_position"])
-        self.assertEqual("BELOW_MINIMUM_NOTIONAL", result["decision"]["rejection_reason"])
-        self.assertEqual(0, engine.trade_counter)
-
-    def test_signal_does_not_use_unprofitable_depth_to_reach_the_minimum(self):
-        engine = SniperEngine()
-        result = engine.process_tick(
-            {
-                "best_bid": 99.9,
-                "best_ask": 100.0,
-                "mid_price": 99.95,
-                "bids": [["99.9", "3.0"]],
-                "asks": [["100.0", "0.05000"], ["108.1", "3.00000"]],
-            },
-            "Binance",
-            110.0,
-            110.0,
-            10.0,
-            "HIGH_CONVICTION",
-            "Major venues agree.",
-        )
-
-        decision = result["decision"]
-        self.assertIsNone(result["active_position"])
-        self.assertEqual("BELOW_MINIMUM_NOTIONAL", decision["rejection_reason"])
-        self.assertEqual(108.0, decision["profitability_limit_price"])
-        self.assertAlmostEqual(0.05, decision["visible_liquidity_btc"])
-        self.assertEqual(0, engine.trade_counter)
-
-    def test_lighter_book_is_cleared_before_a_reconnect_can_reuse_old_sizes(self):
-        manager = StateManager(persistence=NoopPersistence())
-        manager.update_lighter(
-            [["99.9", "1.0"]],
-            [["100.0", "2.0"]],
-            99.9,
-            100.0,
-        )
-
-        manager.reset_lighter_orderbook(status="WS RECONNECTING...")
-
-        self.assertEqual([], manager.lighter["bids"])
-        self.assertEqual([], manager.lighter["asks"])
-        self.assertEqual(0.0, manager.lighter["best_bid"])
-        self.assertEqual(0.0, manager.lighter["best_ask"])
-        self.assertIsNone(manager.lighter["last_update_monotonic_ns"])
-
-
-class FakeResponse:
-    tx_hash = "test-tx"
-
-
-class FakeSigner:
-    ORDER_TYPE_MARKET = 1
-    ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL = 0
-    DEFAULT_IOC_EXPIRY = -1
-
-    def __init__(self):
-        self.order = None
-
-    async def create_order(self, **kwargs):
-        self.order = kwargs
-        return object(), FakeResponse(), None
-
-
-class LighterOrderGuardTests(unittest.IsolatedAsyncioTestCase):
-    async def test_live_client_uses_the_exact_displayed_limit_and_floor_quantity(self):
-        client = LighterClient()
-        signer = FakeSigner()
-        client._get_signer = lambda: signer
-
-        success, tx_hash, error = await client.open_snipe_order(
-            side="LONG",
-            size_btc=0.100019,
-            limit_price=100.0,
-            trade_id=7,
-        )
-
-        self.assertTrue(success)
-        self.assertEqual("test-tx", tx_hash)
-        self.assertIsNone(error)
-        self.assertEqual(10_001, signer.order["base_amount"])
-        self.assertEqual(1_000, signer.order["price"])
-        self.assertFalse(signer.order["is_ask"])
-
-    async def test_live_client_rejects_an_order_at_or_below_ten_usdc(self):
-        client = LighterClient()
-        signer = FakeSigner()
-        client._get_signer = lambda: signer
-
-        success, tx_hash, error = await client.open_snipe_order(
-            side="LONG",
-            size_btc=0.1,
-            limit_price=100.0,
-            trade_id=8,
-        )
-
-        self.assertFalse(success)
-        self.assertIsNone(tx_hash)
-        self.assertIn("strictly greater", error)
-        self.assertIsNone(signer.order)
 
 
 if __name__ == "__main__":

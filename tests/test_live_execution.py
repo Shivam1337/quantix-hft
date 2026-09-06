@@ -126,7 +126,7 @@ class LiveExecutionLifecycleTests(unittest.IsolatedAsyncioTestCase):
             "best_ask": 100.0 if best_bid < 105 else 110.1,
             "mid_price": (best_bid + (100.0 if best_bid < 105 else 110.1)) / 2,
             "bids": [[str(best_bid), "3.0"]],
-            "asks": [["100.0", "0.05000"], ["100.1", "0.06000"], ["100.2", "0.07000"]],
+            "asks": [["100.0", "0.10000"], ["100.1", "0.12000"], ["100.2", "0.14000"]],
         }
 
     async def test_exit_waits_for_entry_fill_and_records_only_confirmed_exit(self):

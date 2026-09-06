@@ -113,7 +113,7 @@ class CanceledEntryTelemetryTests(unittest.IsolatedAsyncioTestCase):
         return {
             "best_bid": 99.9, "best_ask": 100.0, "mid_price": 99.95,
             "bids": [["99.9", "3.0"], ["99.8", "3.0"]],
-            "asks": [["100.0", "0.05"], ["100.1", "0.06"], ["100.2", "0.07"]],
+            "asks": [["100.0", "0.10"], ["100.1", "0.12"], ["100.2", "0.14"]],
         }
 
 

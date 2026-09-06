@@ -80,18 +80,21 @@ def calculate_executable_order(
     limit_price: float,
     notional_cap_usd: float,
     max_levels: int = 1,
+    liquidity_participation: float = 1.0,
 ) -> ExecutableOrder:
-    """Cap an IOC order to displayed depth and a strict notional ceiling.
+    """Cap an IOC order to a fraction of displayed depth and its notional ceiling.
 
     LONG/BUY consumes asks at or below ``limit_price``. SHORT/SELL consumes bids
-    at or above it. ``max_levels`` bounds the price ladder. The returned
-    ``limit_price`` is the deepest level actually used, so a live IOC never
-    sweeps past the displayed ladder simply because the profitability bound was
-    farther away.
+    at or above it. ``max_levels`` bounds the price ladder and
+    ``liquidity_participation`` caps both the usable share of each level and the
+    configured notional ceiling. The returned ``limit_price`` is the deepest
+    level actually used, so a live IOC never sweeps past the displayed ladder
+    simply because the profitability bound was farther away.
     """
     direction = _normalise_side(side)
     profitability_limit = _positive_decimal(limit_price)
     cap = _positive_decimal(notional_cap_usd)
+    participation = _normalise_liquidity_participation(liquidity_participation)
     levels = _eligible_levels(direction, bids, asks, profitability_limit)
     levels = levels[:_normalise_max_levels(max_levels)]
 
@@ -110,14 +113,16 @@ def calculate_executable_order(
     executable_notional = Decimal()
     worst_observed_price = Decimal()
     order_limit = Decimal()
+    participating_cap = cap * participation
     levels_used = 0
     for price, visible_at_level in levels:
         candidate_worst_price = max(worst_observed_price, price)
-        maximum_safe_size = _floor_btc_size(cap / candidate_worst_price)
+        maximum_safe_size = _floor_btc_size(participating_cap / candidate_worst_price)
         remaining_safe_size = maximum_safe_size - executable_size
         if remaining_safe_size <= 0:
             break
-        allowed_size = min(visible_at_level, remaining_safe_size)
+        participating_level_size = _floor_btc_size(visible_at_level * participation)
+        allowed_size = min(participating_level_size, remaining_safe_size)
         size = _floor_btc_size(allowed_size)
         if size <= 0:
             continue
@@ -210,6 +215,16 @@ def _normalise_max_levels(value: Any) -> int:
         return max(0, int(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _normalise_liquidity_participation(value: Any) -> Decimal:
+    try:
+        participation = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal()
+    if not participation.is_finite():
+        return Decimal()
+    return min(Decimal(1), max(Decimal(), participation))
 
 
 def _empty_order(

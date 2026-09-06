@@ -3,9 +3,17 @@ System Health, Connection Status, and SSE Streaming Endpoints.
 """
 import json
 import asyncio
+import time
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from app.core.state_manager import state_manager
+from app.core.dashboard_payload import (
+    DASHBOARD_DETAIL_INTERVAL_SECONDS,
+    DASHBOARD_TICK_INTERVAL_SECONDS,
+    build_dashboard_detail,
+    build_dashboard_snapshot,
+    build_dashboard_tick,
+)
 
 router = APIRouter(prefix="/api/system", tags=["System & Health"])
 
@@ -58,17 +66,30 @@ async def get_database_size():
 
 
 @router.get("/readiness", summary="Deployment readiness without external-feed dependency")
-
 async def get_readiness():
     """Used by Docker health checks; requires PostgreSQL and a non-shutting-down app."""
     return state_manager.get_readiness()
 
 
+@router.get("/dashboard", summary="Query the bounded dashboard control-plane snapshot")
+async def get_dashboard_snapshot():
+    """Returns the compact initial payload used by the dashboard SSE client."""
+    return build_dashboard_snapshot(state_manager)
+
+
+def _sse_event(name: str, payload: dict) -> str:
+    """Serialize a named SSE frame without JSON whitespace overhead."""
+    return f"event: {name}\ndata:{json.dumps(payload, separators=(',', ':'))}\n\n"
+
+
 @router.get("/stream", summary="Live Server-Sent Events stream")
 async def sse_event_stream():
     """
-    Real-time Server-Sent Events (SSE) stream pushing comprehensive state
-    snapshots to connected dashboard clients every 100ms.
+    Stream a bounded dashboard snapshot followed by compact control ticks.
+
+    The dashboard does not need full chart history, L2 books, and table rows
+    ten times per second. It receives responsive market/decision updates at
+    4 Hz and chart/table/resource details at 1 Hz instead.
     """
     async def event_generator():
         queue = asyncio.Queue()
@@ -78,11 +99,15 @@ async def sse_event_stream():
             # HTTP connections. Returning here releases dashboard SSE clients
             # promptly so the lifespan can drain PostgreSQL within Docker's
             # stop-grace budget.
+            yield _sse_event("snapshot", build_dashboard_snapshot(state_manager))
+            last_detail_at = time.monotonic()
             while not state_manager.is_shutting_down():
-                # Push state every 100ms
-                data = state_manager.get_full_state()
-                yield f"data: {json.dumps(data)}\n\n"
-                await asyncio.sleep(0.1)
+                yield _sse_event("tick", build_dashboard_tick(state_manager))
+                now = time.monotonic()
+                if now - last_detail_at >= DASHBOARD_DETAIL_INTERVAL_SECONDS:
+                    yield _sse_event("detail", build_dashboard_detail(state_manager))
+                    last_detail_at = now
+                await asyncio.sleep(DASHBOARD_TICK_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             pass
         finally:
@@ -102,4 +127,3 @@ async def sse_event_stream():
 async def reset_simulation():
     """Resets the simulation: wipes paper trades, decision stance, and resets starting balance."""
     return await state_manager.reset_simulation()
-

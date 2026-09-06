@@ -1,0 +1,17 @@
+{
+  "name": "quantix-hft-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:dashboard": "esbuild frontend/src/main.jsx --bundle --format=esm --target=es2022 --jsx=automatic --jsx-import-source=preact --minify --outfile=app/static/dashboard-app.js",
+    "build:styles": "esbuild frontend/styles/app.css --bundle --minify --outfile=app/static/styles.css",
+    "build:frontend": "npm run build:styles && npm run build:dashboard",
+    "test:frontend": "node --test frontend/test/dashboard-store.test.mjs"
+  },
+  "dependencies": {
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

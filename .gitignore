@@ -6,4 +6,5 @@ data/wallet.json
 data/settings.json
 *.db
 *.sqlite*
-
+node_modules/
+app/static/dashboard-app.js.map

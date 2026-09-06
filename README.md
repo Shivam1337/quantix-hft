@@ -57,6 +57,8 @@ non-local deployment.
 
 ```powershell
 docker compose up -d postgres
+npm ci
+npm run build:frontend
 python .\run_server.py
 ```
 
@@ -75,6 +77,17 @@ Invoke-RestMethod http://127.0.0.1:8765/api/analytics/experiment-status
 The dashboard uses a local canvas chart renderer, so charts do not depend on a
 third-party CDN. It records a gap-aware sample at most every 250 ms: a provider
 that has not produced a fresh quote is shown as a gap, never as a false zero.
+
+## Dashboard control plane
+
+The dashboard is a Preact control plane compiled to static assets; the
+production Python container does not run Node.js. Docker builds the assets in a
+temporary Node stage, while source runs use `npm run build:frontend` after any
+frontend change. Preact mounts only the active route, coalesces SSE updates to
+one browser animation frame, and keeps chart/table detail updates separate from
+the 4 Hz quote path. The server sends a bounded 120-point display chart and the
+browser replaces—not appends—each detail snapshot, so dashboard runtime does
+not grow with elapsed uptime.
 
 `/api/system/resources` reports host CPU/RAM beside the server process CPU/RAM.
 Both CPU percentages are normalized to total logical-machine capacity, so they

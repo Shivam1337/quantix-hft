@@ -1,0 +1,118 @@
+.global-trading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.global-trading-label {
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.global-trading-control.paused .global-trading-label {
+  color: #fca5a5;
+}
+
+.global-trading-description {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 52px;
+  height: 28px;
+  flex: 0 0 auto;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  border-radius: 20px;
+  background: rgba(239, 68, 68, 0.7);
+  border: 1px solid rgba(239, 68, 68, 0.8);
+  transition: 0.2s ease;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  left: 3px;
+  bottom: 3px;
+  border-radius: 50%;
+  background: #fff;
+  transition: 0.2s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: rgba(16, 229, 152, 0.8);
+  border-color: var(--green);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(24px);
+}
+
+.toggle-switch input:focus-visible + .toggle-slider {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.form-input {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--panel-bg-alt);
+  border: 1px solid var(--border);
+  color: #fff;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  width: 100%;
+}
+
+.form-input:focus {
+  border-color: #38bdf8;
+}
+
+.form-help {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+

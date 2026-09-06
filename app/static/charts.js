@@ -28,7 +28,8 @@
       this.resizeObserver = typeof ResizeObserver === 'function'
         ? new ResizeObserver(() => this.requestDraw()) : null;
       if (this.resizeObserver) this.resizeObserver.observe(canvas);
-      window.addEventListener('resize', () => this.requestDraw());
+      this.onResize = () => this.requestDraw();
+      window.addEventListener('resize', this.onResize);
       this.requestDraw();
     }
 
@@ -65,6 +66,16 @@
       this.datasets.forEach((set) => { set.data = []; });
       this.lastSignature = '';
       this.requestDraw();
+    }
+
+    destroy() {
+      this.resizeObserver?.disconnect();
+      window.removeEventListener('resize', this.onResize);
+      if (this.frameHandle !== null) {
+        window.cancelAnimationFrame?.(this.frameHandle);
+        window.clearTimeout(this.frameHandle);
+      }
+      this.frameHandle = null;
     }
 
     requestDraw() {

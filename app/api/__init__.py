@@ -1,3 +1,0 @@
-"""
-FastAPI REST routes package.
-"""

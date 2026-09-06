@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BTC Perpetual Lead-Lag & Snipe Server | HFT Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=2.4.0" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="app-sidebar">
+      <div class="sidebar-brand">
+        <div class="coin-badge">⚡</div>
+        <div class="sidebar-brand-text">
+          <div class="sidebar-title">QUANTIX HFT</div>
+          <div class="sidebar-sub">LEAD-LAG ENGINE</div>
+        </div>
+      </div>
+
+      <!-- Mode Badge in Sidebar -->
+      <div class="sidebar-mode-box" id="sidebar-mode-box" onclick="switchTab('settings')" title="Click to open Settings & Mode Switcher">
+        <div class="mode-indicator-dot" id="sidebar-mode-dot"></div>
+        <div>
+          <div class="mode-indicator-label" id="sidebar-mode-label">SIMULATION</div>
+          <div class="mode-indicator-sub" id="sidebar-mode-sub">Paper Trading (0 Risk)</div>
+        </div>
+      </div>
+
+      <!-- Nav Links -->
+      <nav class="sidebar-nav">
+        <button class="nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')">
+          <span class="nav-icon">📊</span>
+          <span class="nav-label">Live Trading</span>
+        </button>
+        <button class="nav-item" id="nav-wallet" onclick="switchTab('wallet')">
+          <span class="nav-icon">👛</span>
+          <span class="nav-label">Wallet & Balances</span>
+        </button>
+        <button class="nav-item" id="nav-settings" onclick="switchTab('settings')">
+          <span class="nav-icon">⚙️</span>
+          <span class="nav-label">Settings & Keys</span>
+        </button>
+        <button class="nav-item" id="nav-api" onclick="switchTab('api')">
+          <span class="nav-icon">🔍</span>
+          <span class="nav-label">API Inspector</span>
+        </button>
+      </nav>
+
+      <!-- Sidebar Telemetry Footer -->
+      <div class="sidebar-footer">
+        <div class="sidebar-stat-row mono">
+          <span class="stat-tag">UPTIME</span>
+          <span id="sidebar-uptime-display">00:00:00</span>
+        </div>
+        <div class="sidebar-stat-row mono">
+          <span class="stat-tag">DB SIZE</span>
+          <span id="sidebar-db-size-display">-- MB</span>
+        </div>
+        <div class="sidebar-stat-row mono">
+          <span class="stat-tag">ENGINE</span>
+          <span style="color: var(--green);">ONLINE</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="main-content-area">
+      <!-- View 1: Trading Dashboard -->
+      <section id="view-dashboard" class="view-pane active">
+        <div class="app-container">
+    <!-- Sleek Top Command Bar -->
+    <header class="divided-header">
+      <div class="command-market-strip">
+        <div class="asset-symbol-pill mono">
+          <span class="symbol-dot"></span>
+          <span class="symbol-name">BTC-USDT PERP</span>
+        </div>
+        <div class="route-tag mono">
+          <span>5 DISCOVERY FEEDS</span>
+          <span class="route-arrow">→</span>
+          <span class="target-name" style="color: var(--lighter-color); font-weight: 700;">LIGHTER.XYZ (ZK)</span>
+        </div>
+        <span class="zero-fee-pill mono">0% MAKER / TAKER FEES</span>
+      </div>
+      <div class="header-status-strip">
+        <!-- DB Storage Size Widget (No Polling, Initial Load + On-Click Refresh) -->
+        <div class="db-storage-box mono" title="Total database disk footprint (DB file + WAL/SHM or PG relation size). Click Refresh to re-query without polling.">
+          <div class="db-badge-info">
+            <span class="db-badge-title">DB (<span id="db-size-backend">SQLite</span>):</span>
+            <span class="db-badge-size" id="db-size-val">-- MB</span>
+          </div>
+          <button class="db-refresh-btn" id="refresh-db-btn" onclick="refreshDbSize()" title="Query DB size now (no polling)">🔄</button>
+          <span class="db-badge-title" id="db-checked-at" style="color: var(--text-dim); margin-left: 2px;"></span>
+        </div>
+
+        <div class="header-stat-item">
+          <span class="stat-tag">Feed Stream</span>
+          <span class="stat-text">
+            <span class="dot"></span>
+            <span id="conn-status">INITIALIZING...</span>
+          </span>
+        </div>
+        <div class="header-stat-item">
+          <span class="stat-tag">Sync Time</span>
+          <span class="stat-text" id="update-clock">--:--:--</span>
+        </div>
+        <div class="header-stat-item">
+          <span class="stat-tag">Server Uptime</span>
+          <span class="stat-text" id="uptime-display" style="color: #94a3b8;">00:00:00</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- 6-Exchange Divided Ticker Strip -->
+    <div class="ticker-strip">
+      <!-- 1. Binance Futures -->
+      <div class="ticker-cell" id="card-binance">
+        <div class="ticker-cell-header">
+          <span style="color: var(--bn-color);">● BINANCE FUTURES</span>
+          <span class="mono ticker-status-text" style="color: var(--bn-color);" id="bn-status">WS STREAMING</span>
+        </div>
+        <div class="ticker-cell-price mono" id="bn-price" style="color: var(--bn-color);">$0.00</div>
+        <div class="ticker-cell-meta mono">
+          <span id="bn-spread">Spread: $0.00</span>
+          <span style="color: var(--bn-color);">Global Depth</span>
+        </div>
+        <div class="ticker-bids-asks mono">
+          <span>Bid <strong style="color: var(--green);" id="bn-bid">$--</strong></span>
+          <span>Ask <strong style="color: var(--red);" id="bn-ask">$--</strong></span>
+        </div>
+      </div>
+
+      <!-- 2. Bybit Linear -->
+      <div class="ticker-cell" id="card-bybit">
+        <div class="ticker-cell-header">
+          <span style="color: var(--bybit-color);">● BYBIT LINEAR</span>
+          <span class="mono ticker-status-text" style="color: var(--bybit-color);" id="bybit-status">WS STREAMING</span>
+        </div>
+        <div class="ticker-cell-price mono" id="bybit-price" style="color: var(--bybit-color);">$0.00</div>
+        <div class="ticker-cell-meta mono">
+          <span id="bybit-spread">Spread: $0.00</span>
+          <span style="color: var(--bybit-color);">Momentum</span>
+        </div>
+        <div class="ticker-bids-asks mono">
+          <span>Bid <strong style="color: var(--green);" id="bybit-bid">$--</strong></span>
+          <span>Ask <strong style="color: var(--red);" id="bybit-ask">$--</strong></span>
+        </div>
+      </div>
+
+      <!-- 3. OKX Perpetual -->
+      <div class="ticker-cell" id="card-okx">
+        <div class="ticker-cell-header">
+          <span style="color: var(--okx-color);">● OKX PERP</span>
+          <span class="mono ticker-status-text" style="color: var(--okx-color);" id="okx-status">WS STREAMING</span>
+        </div>
+        <div class="ticker-cell-price mono" id="okx-price" style="color: var(--okx-color);">$0.00</div>
+        <div class="ticker-cell-meta mono">
+          <span id="okx-spread">Spread: $0.00</span>
+          <span style="color: var(--okx-color);">Asian Orderbook</span>
+        </div>
+        <div class="ticker-bids-asks mono">
+          <span>Bid <strong style="color: var(--green);" id="okx-bid">$--</strong></span>
+          <span>Ask <strong style="color: var(--red);" id="okx-ask">$--</strong></span>
+        </div>
+      </div>
+
+      <!-- 4. Hyperliquid -->
+      <div class="ticker-cell" id="card-hl">
+        <div class="ticker-cell-header">
+          <span style="color: var(--hl-color);">● HYPERLIQUID</span>
+          <span class="mono ticker-status-text" style="color: var(--hl-color);" id="hl-status">WS STREAMING</span>
+        </div>
+        <div class="ticker-cell-price mono" id="hl-price" style="color: var(--hl-color);">$0.00</div>
+        <div class="ticker-cell-meta mono">
+          <span id="hl-spread">Spread: $0.00</span>
+          <span style="color: var(--hl-color);">DEX Discovery</span>
+        </div>
+        <div class="ticker-bids-asks mono">
+          <span>Bid <strong style="color: var(--green);" id="hl-bid">$--</strong></span>
+          <span>Ask <strong style="color: var(--red);" id="hl-ask">$--</strong></span>
+        </div>
+      </div>
+
+      <!-- 5. Polymarket -->
+      <div class="ticker-cell" id="card-poly">
+        <div class="ticker-cell-header">
+          <span style="color: var(--poly-color);">● POLYMARKET</span>
+          <span class="mono ticker-status-text" style="color: var(--poly-color);" id="poly-status">WS STREAMING</span>
+        </div>
+        <div class="ticker-cell-price mono" id="poly-price" style="color: var(--poly-color);">$0.00</div>
+        <div class="ticker-cell-meta mono">
+          <span id="poly-lag-sub">Lag: --</span>
+          <span id="poly-spread" style="color: var(--poly-color);">Spread: --</span>
+        </div>
+        <div class="ticker-bids-asks mono">
+          <span>Bid <strong style="color: var(--green);" id="poly-bid">$--</strong></span>
+          <span>Ask <strong style="color: var(--red);" id="poly-ask">$--</strong></span>
+        </div>
+      </div>
+
+      <!-- 6. Lighter.xyz Execution Target -->
+      <div class="ticker-cell lighter-target" id="card-lighter">
+        <div class="ticker-cell-header">
+          <span style="color: var(--lighter-color);">● LIGHTER.XYZ (ZK)</span>
+          <span class="zero-fee-pill" id="lighter-status">CONNECTING...</span>
+        </div>
+        <div class="ticker-cell-price mono" id="lighter-price" style="color: var(--lighter-color);">$0.00</div>
+        <div class="ticker-cell-meta mono">
+          <span id="lighter-lag-sub" style="color: var(--lighter-color);">Lag: --</span>
+          <span id="lighter-spread">Spread: --</span>
+        </div>
+        <div class="ticker-bids-asks mono">
+          <span>Bid <strong style="color: var(--green);" id="lighter-bid">$--</strong></span>
+          <span>Ask <strong style="color: var(--red);" id="lighter-ask">$--</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6-Card Performance & Capital Sizing Strip (Full Width Divided) -->
+    <div class="perf-strip mono">
+      <div class="perf-card">
+        <div class="stat-label">Account Equity</div>
+        <div class="stat-val" id="perf-equity" style="color: var(--cyan);">$100.00</div>
+        <div class="stat-sub" id="perf-balance-sub">Base: $100 · Free: $100</div>
+      </div>
+      <div class="perf-card">
+        <div class="stat-label">Margin @ 50x Leverage</div>
+        <div class="stat-val" id="perf-margin-alloc" style="color: var(--lighter-color);">$50.00 (50%)</div>
+        <div class="stat-sub" id="perf-leverage-sub">50x Lighter Leverage</div>
+      </div>
+      <div class="perf-card">
+        <div class="stat-label">Target Notional</div>
+        <div class="stat-val" id="perf-notional" style="color: #cbd5e1;">$2,500.00</div>
+        <div class="stat-sub" id="perf-size-sub">Dynamic ~0.028 BTC</div>
+      </div>
+      <div class="perf-card">
+        <div class="stat-label">Net PnL (Lighter)</div>
+        <div class="stat-val" id="perf-net-pnl" style="color: var(--green);">$0.00</div>
+        <div class="stat-sub" id="perf-rom-sub">RoM: +0.0% · 0% Fees</div>
+      </div>
+      <div class="perf-card">
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-val" id="perf-winrate" style="color: var(--cyan);">--%</div>
+        <div class="stat-sub" id="perf-trades-count">0 Trades</div>
+      </div>
+      <div class="perf-card">
+        <div class="stat-label">Fees Saved vs Poly</div>
+        <div class="stat-val" id="perf-saved-fees" style="color: var(--green);">$0.00</div>
+        <div class="stat-sub">Avoided $64/BTC hurdle</div>
+      </div>
+    </div>
+
+    <!-- Main Divided Viewport (Left Panel: Sniper Cockpit + Host Telemetry, Right Panel: 2 Charts) -->
+    <div class="main-divided-grid">
+      <!-- Left Divided Column: Cockpit & Resources (380px) -->
+      <div class="left-divided-col">
+        <!-- 1. Dynamic Sniper Engine Cockpit -->
+        <div class="panel-block cockpit-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>⚡ DYNAMIC SNIPER COCKPIT</span>
+              <span class="zero-fee-pill">ZERO FEES</span>
+            </div>
+            <div class="cockpit-badges">
+              <span id="stance-badge" class="stance-badge mono stance-MONITORING">MONITORING</span>
+              <span id="leader-badge" class="leader-badge mono" style="font-size: 10px; color: var(--bn-color); font-weight: 700;">👑 LEADER: --</span>
+              <span id="consensus-badge" class="consensus-badge mono" style="font-size: 10px; color: var(--blue);">CONSENSUS</span>
+              <span id="agreement-badge" class="agreement-badge mono" style="font-size: 10px; color: var(--text-muted);">5-WAY</span>
+            </div>
+          </div>
+
+          <!-- Active Position Banner -->
+          <div class="active-pos-box mono" id="active-pos-box">
+            <div class="active-pos-header">● ACTIVE SNIPER POSITION (LIGHTER):</div>
+            <div id="pos-details"></div>
+          </div>
+
+          <!-- Rationale Text Box / Live Terminal -->
+          <div class="rationale-box mono" id="decision-rationale">
+            Awaiting multi-exchange discovery updates...
+          </div>
+        </div>
+
+        <!-- 2. Host & Server Resources Panel -->
+        <div class="panel-block resources-panel">
+          <div class="panel-header">
+            <div class="panel-title">HOST & SERVER RESOURCES</div>
+            <div class="mono panel-telemetry-sub">
+              <span id="resource-sample-detail">Sampling...</span> | <span id="persistence-status">PostgreSQL: connecting...</span>
+            </div>
+          </div>
+
+          <div class="resources-grid mono">
+            <div class="resource-cell">
+              <span class="resource-label">System CPU</span>
+              <strong id="system-cpu">--</strong>
+              <small>Whole machine</small>
+            </div>
+            <div class="resource-cell">
+              <span class="resource-label">Server Process CPU</span>
+              <strong id="process-cpu">--</strong>
+              <small>Python server only</small>
+            </div>
+            <div class="resource-cell">
+              <span class="resource-label">System RAM</span>
+              <strong id="system-ram">--</strong>
+              <small id="system-ram-detail">-- / --</small>
+            </div>
+            <div class="resource-cell">
+              <span class="resource-label">Server RAM</span>
+              <strong id="process-ram">--</strong>
+              <small id="process-ram-detail">-- of host RAM</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Divided Column: 2 Full-Width Divided Charts -->
+      <div class="right-divided-col">
+        <!-- Chart 1: 6-Way Price Overlay -->
+        <div class="chart-panel-block">
+          <div class="chart-header-row">
+            <div class="chart-title">6-WAY REAL-TIME PRICE OVERLAY (BTC PERPETUALS)</div>
+            <span class="chart-status-pill mono" id="price-chart-status">Waiting for first live sample</span>
+          </div>
+          <div class="chart-viewport">
+            <canvas id="priceChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart 2: Lighter Lag vs Dynamic Leader -->
+        <div class="chart-panel-block">
+          <div class="chart-header-row">
+            <div class="chart-title">LIGHTER.XYZ LAG VS DYNAMIC LEADER & SNIPE THRESHOLD (+$6.00)</div>
+            <span class="chart-status-pill mono" id="lag-chart-status">Waiting for first live sample</span>
+          </div>
+          <div class="chart-viewport">
+            <canvas id="lagChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Divided Data Tables (2 Columns Full-Width) -->
+    <div class="bottom-tables-grid">
+      <!-- Left Column: Recent Trades + Provider Telemetry Stacked Below -->
+      <div class="tables-col-left">
+        <!-- Table 1: Recent Sniper Trades -->
+        <div class="table-block">
+          <div class="table-header">
+            <span class="table-title">Recent Sniper Trades (Zero Fees)</span>
+            <span class="table-sub mono">GET /api/trades/history</span>
+          </div>
+          <div class="table-scroll">
+            <table class="divided-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Side</th>
+                  <th>Size / Notional</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>Net PnL (RoM)</th>
+                  <th>Hold</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="trades-table-body">
+                <tr><td colspan="8" style="color: var(--text-muted); text-align: center;">Awaiting trades...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Table 2: Provider Telemetry & Freshness (Moved below Recent Sniper Trades) -->
+        <div class="table-block table-block-bottom">
+          <div class="table-header">
+            <span class="table-title">Provider Telemetry & Freshness</span>
+            <span class="table-sub mono">GET /api/system/providers</span>
+          </div>
+          <div class="table-scroll">
+            <table class="divided-table">
+              <thead>
+                <tr>
+                  <th>Provider / Role</th>
+                  <th>Quality / Age</th>
+                  <th>Updates</th>
+                  <th>Mid / Spread</th>
+                  <th>2s Move</th>
+                  <th>Last Update</th>
+                </tr>
+              </thead>
+              <tbody id="provider-insights-body">
+                <tr><td colspan="6" style="color: var(--text-muted); text-align: center;">Waiting for provider telemetry...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Repricing Catch-up Cycles -->
+      <div class="tables-col-right">
+        <div class="table-block table-block-tall">
+          <div class="table-header">
+            <span class="table-title">Repricing Catch-Up Cycles</span>
+            <span class="table-sub mono">GET /api/analytics/repricing-events</span>
+          </div>
+          <div class="table-scroll table-scroll-tall">
+            <table class="divided-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Dir</th>
+                  <th>Initial Lag</th>
+                  <th>Duration</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="repricing-table-body">
+                <tr><td colspan="5" style="color: var(--text-muted); text-align: center;">Monitoring breakout repricing cycles...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+      </section>
+
+      <!-- View 2: Wallet & Balances -->
+      <section id="view-wallet" class="view-pane" style="display: none;">
+        <div class="view-content-wrapper">
+          <div class="view-header">
+            <div>
+              <div class="view-title">👛 Server Wallet & Lighter zkRollup Balances</div>
+              <div class="view-subtitle">Maintained automatically on the server. Fund with USDC to enable live zero-fee execution.</div>
+            </div>
+            <div class="view-actions">
+              <button class="btn btn-secondary" onclick="refreshWalletData()">🔄 Refresh Balances</button>
+              <button class="btn btn-secondary" onclick="showImportWalletModal()">📥 Import Key</button>
+              <button class="btn btn-danger" onclick="confirmGenerateWallet()">➕ New Wallet</button>
+            </div>
+          </div>
+
+          <!-- Balances Summary Cards -->
+          <div class="wallet-cards-grid">
+            <div class="wallet-card highlight">
+              <div class="wallet-card-header">
+                <span class="wallet-card-label">LIGHTER COLLATERAL (USDC)</span>
+                <span class="badge" id="wallet-lighter-status">CHECKING...</span>
+              </div>
+              <div class="wallet-card-val mono" id="wallet-lighter-collateral">$0.00</div>
+              <div class="wallet-card-sub mono">
+                <span>Free Margin: <strong id="wallet-lighter-free">$0.00</strong></span>
+                <span>Account: <strong id="wallet-lighter-acc-idx">#--</strong></span>
+              </div>
+            </div>
+
+            <div class="wallet-card">
+              <div class="wallet-card-header">
+                <span class="wallet-card-label">ARBITRUM GAS (ETH)</span>
+                <span class="badge badge-info">Arbitrum One</span>
+              </div>
+              <div class="wallet-card-val mono" id="wallet-arb-eth">0.000000 ETH</div>
+              <div class="wallet-card-sub mono">
+                <span>Network: <strong>Arbitrum (42161)</strong></span>
+                <span id="wallet-last-checked">Sync: --:--:--</span>
+              </div>
+            </div>
+
+            <div class="wallet-card">
+              <div class="wallet-card-header">
+                <span class="wallet-card-label">TRADING READINESS</span>
+                <span class="badge" id="wallet-readiness-badge">SIMULATION ONLY</span>
+              </div>
+              <div class="wallet-card-val" id="wallet-readiness-val" style="font-size: 18px; color: var(--amber);">Awaiting Collateral</div>
+              <div class="wallet-card-sub">
+                <span id="wallet-readiness-msg">Deposit USDC on Lighter to trade live</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Keys & Credentials Container -->
+          <div class="credentials-card">
+            <div class="credentials-card-title">🔐 Wallet Keys & zk-Signer Credentials</div>
+            
+            <!-- L1 Address -->
+            <div class="credential-row">
+              <div class="credential-info">
+                <div class="credential-label">Ethereum L1 Address (Public Key / Deposit Address)</div>
+                <div class="credential-value mono" id="wallet-l1-address">0x----------------------------------------</div>
+              </div>
+              <div class="credential-actions">
+                <button class="btn-copy" onclick="copyText(document.getElementById('wallet-l1-address').innerText, this)">📋 Copy Address</button>
+              </div>
+            </div>
+
+            <!-- L1 Private Key -->
+            <div class="credential-row">
+              <div class="credential-info">
+                <div class="credential-label">Ethereum L1 Private Key (Use to import into MetaMask / Rabby)</div>
+                <div class="credential-value mono" id="wallet-l1-privkey">••••••••••••••••••••••••••••••••</div>
+              </div>
+              <div class="credential-actions">
+                <button class="btn-copy" id="toggle-l1-priv-btn" onclick="toggleRevealKey('l1', this)">👁️ Show</button>
+                <button class="btn-copy" onclick="copyUnmaskedKey('private_key', this)">📋 Copy Key</button>
+              </div>
+            </div>
+
+            <!-- Lighter Public Key -->
+            <div class="credential-row">
+              <div class="credential-info">
+                <div class="credential-label">Lighter zk-Signer Public Key</div>
+                <div class="credential-value mono" id="wallet-lighter-pubkey">0x----------------------------------------</div>
+              </div>
+              <div class="credential-actions">
+                <button class="btn-copy" onclick="copyText(document.getElementById('wallet-lighter-pubkey').innerText, this)">📋 Copy Key</button>
+              </div>
+            </div>
+
+            <!-- Lighter Private Key -->
+            <div class="credential-row">
+              <div class="credential-info">
+                <div class="credential-label">Lighter zk-Signer Private Key (For API Order Signing)</div>
+                <div class="credential-value mono" id="wallet-lighter-privkey">••••••••••••••••••••••••••••••••</div>
+              </div>
+              <div class="credential-actions">
+                <button class="btn-copy" id="toggle-lighter-priv-btn" onclick="toggleRevealKey('lighter', this)">👁️ Show</button>
+                <button class="btn-copy" onclick="copyUnmaskedKey('lighter_private_key', this)">📋 Copy Key</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step-by-Step Deposit Guide -->
+          <div class="guide-box">
+            <div class="guide-box-title">📖 Quick Onboarding & Deposit Guide</div>
+            <div class="guide-steps-grid">
+              <div class="guide-step">
+                <div class="step-num">1</div>
+                <div class="step-text"><strong>Copy Address:</strong> Copy your Ethereum L1 address above.</div>
+              </div>
+              <div class="guide-step">
+                <div class="step-num">2</div>
+                <div class="step-text"><strong>Fund with USDC:</strong> Send USDC (e.g. $100) and $2-3 worth of ETH for gas on <em>Arbitrum One</em> to this address.</div>
+              </div>
+              <div class="guide-step">
+                <div class="step-num">3</div>
+                <div class="step-text"><strong>Deposit to Lighter:</strong> Go to <a href="https://app.lighter.xyz" target="_blank" style="color: var(--cyan);">app.lighter.xyz</a>, import this wallet into MetaMask/Rabby, and deposit USDC into the zkLighter smart contract.</div>
+              </div>
+              <div class="guide-step">
+                <div class="step-num">4</div>
+                <div class="step-text"><strong>Enable Real Mode:</strong> Click "Refresh Balances" above. Once your account index is detected, go to <strong>Settings</strong> and switch Mode to <strong>REAL</strong>!</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 3: Settings & API Configuration -->
+      <section id="view-settings" class="view-pane" style="display: none;">
+        <div class="view-content-wrapper">
+          <div class="view-header">
+            <div>
+              <div class="view-title">⚙️ System Configuration & Execution Settings</div>
+              <div class="view-subtitle">Configure trading modes, Lighter API keys, and risk management thresholds.</div>
+            </div>
+            <div class="view-actions">
+              <button class="btn btn-primary" id="save-settings-btn" onclick="saveSystemSettings()">💾 Save & Apply</button>
+            </div>
+          </div>
+
+          <!-- Trading Mode Switcher Box -->
+          <div class="settings-section">
+            <div class="settings-section-title">Execution Mode Switcher</div>
+            <div class="mode-selector-grid">
+              <div class="mode-card active" id="mode-card-sim" onclick="selectTradingMode('SIMULATION')">
+                <div class="mode-card-radio"><span class="radio-dot"></span></div>
+                <div>
+                  <div class="mode-card-name">🟡 SIMULATION (Paper Trading)</div>
+                  <div class="mode-card-desc">Zero risk. Executes simulated orders across live Lighter bid/ask spread with $100 virtual balance.</div>
+                </div>
+              </div>
+              <div class="mode-card" id="mode-card-real" onclick="selectTradingMode('REAL')">
+                <div class="mode-card-radio"><span class="radio-dot"></span></div>
+                <div>
+                  <div class="mode-card-name">🟢 REAL (Live Lighter Execution)</div>
+                  <div class="mode-card-desc">Active capital. Signs and submits real IOC market orders to zkLighter sequencer with 0% fees. Requires funded account index and API key.</div>
+                </div>
+              </div>
+            </div>
+            <div id="mode-status-alert" class="settings-alert"></div>
+          </div>
+
+          <!-- Lighter API Keys & Network Settings -->
+          <div class="settings-section">
+            <div class="settings-section-title">Lighter.xyz Credentials & Network</div>
+            <div class="settings-form-grid">
+              <div class="form-group">
+                <label class="form-label">Network</label>
+                <select class="form-input" id="setting-network">
+                  <option value="mainnet">Mainnet (Chain ID 304 - https://mainnet.zklighter.elliot.ai)</option>
+                  <option value="testnet">Testnet (Chain ID 300 - https://testnet.zklighter.elliot.ai)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Lighter Account Index</label>
+                <input type="number" class="form-input mono" id="setting-acc-idx" placeholder="e.g. 12345 (Auto-detected from wallet)" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">API Key Index</label>
+                <input type="number" class="form-input mono" id="setting-key-idx" value="4" min="4" max="254" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Lighter API Private Key</label>
+                <div style="display: flex; gap: 8px;">
+                  <input type="password" class="form-input mono" id="setting-api-privkey" placeholder="0x... or leave empty to use server wallet key" />
+                  <button class="btn-copy" type="button" onclick="toggleInputVisibility('setting-api-privkey', this)">👁️</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sizing & Risk Parameters -->
+          <div class="settings-section">
+            <div class="settings-section-title">Capital Allocation & Risk Parameters</div>
+            <div class="settings-form-grid">
+              <div class="form-group">
+                <label class="form-label">Margin Allocation per Trade (%)</label>
+                <input type="number" class="form-input mono" id="setting-margin-pct" value="50" min="10" max="100" step="5" />
+                <span class="form-help">Percentage of account equity allocated as margin (default: 50%).</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Leverage Multiplier</label>
+                <input type="number" class="form-input mono" id="setting-leverage" value="50" min="1" max="50" step="1" />
+                <span class="form-help">Leverage applied on Lighter (up to 50x for BTC perp).</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Min Lag Trigger ($)</label>
+                <input type="number" class="form-input mono" id="setting-min-lag" value="6.0" min="1.0" max="50.0" step="0.5" />
+                <span class="form-help">Minimum price divergence between discovery leader and Lighter to trigger snipe.</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Max Hold Seconds</label>
+                <input type="number" class="form-input mono" id="setting-max-hold" value="12.0" min="2.0" max="60.0" step="1.0" />
+                <span class="form-help">Maximum position duration before auto-closing.</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Simulation Starting Balance ($)</label>
+                <input type="number" class="form-input mono" id="setting-sim-starting-balance" value="100.0" min="10.0" max="1000000.0" step="10.0" />
+                <span class="form-help">Initial base balance in USD for the paper simulation engine (default: $100.00).</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Danger Zone: Simulation Lifecycle & System Reset -->
+          <div class="settings-section" style="border-color: rgba(239, 68, 68, 0.35);">
+            <div class="settings-section-title" style="color: var(--red);">⚠️ Simulation Lifecycle & System Reset</div>
+            <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 14px; line-height: 1.5;">
+              Reset the entire simulation system back to time 0. This clears all historical paper trades, repricing cycles, performance metrics, and restarts the sniper engine with your configured starting balance.
+            </p>
+            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-danger" onclick="confirmResetSimulation()">🔄 Reset Simulation to Initial State</button>
+              <span id="reset-sim-feedback" class="mono" style="font-size: 11px; color: var(--text-muted);"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 4: Instant API Inspector & Query Studio -->
+      <section id="view-api" class="view-pane" style="display: none;">
+        <div class="view-content-wrapper">
+          <div class="view-header">
+            <div>
+              <div class="view-title">🔍 Instant API Inspector & Query Studio</div>
+              <div class="view-subtitle">Execute and inspect live HTTP REST endpoints for prices, consensus, sniper trades, and server telemetry.</div>
+            </div>
+            <div class="view-actions">
+              <button class="btn btn-secondary" onclick="copyApiResponse(this)">📋 Copy Response</button>
+              <button class="btn btn-secondary" onclick="clearApiResponse()">✕ Clear</button>
+            </div>
+          </div>
+
+          <!-- Interactive Request Bar -->
+          <div class="api-request-bar">
+            <span class="api-method-badge">GET</span>
+            <input type="text" id="api-custom-endpoint" class="api-endpoint-input mono" value="/api/market/prices" placeholder="/api/..." />
+            <button class="btn btn-primary" onclick="sendCustomApiQuery()">🚀 Send Request</button>
+          </div>
+
+          <!-- Categorized Quick Endpoints -->
+          <div class="api-categories-grid">
+            <!-- Category 1: Market & Prices -->
+            <div class="api-cat-card">
+              <div class="api-cat-title">📈 Market & Pricing</div>
+              <div class="api-cat-buttons">
+                <button class="q-btn" onclick="selectAndQueryApi('/api/market/prices', 'Rapid 6-Way Prices')">GET /api/market/prices</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/analytics/lead-lag', '5-Way Consensus & Leader')">GET /api/analytics/lead-lag</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/system/providers', 'Provider Insights & Freshness')">GET /api/system/providers</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/analytics/fees-comparison', 'Fee Hurdles Breakdown')">GET /api/analytics/fees-comparison</button>
+              </div>
+            </div>
+
+            <!-- Category 2: Execution & Trades -->
+            <div class="api-cat-card">
+              <div class="api-cat-title">⚡ Trading & Execution</div>
+              <div class="api-cat-buttons">
+                <button class="q-btn" onclick="selectAndQueryApi('/api/trades/decision', 'Trade Decision & Stance')">GET /api/trades/decision</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/trades/performance', 'Trading Performance & PnL')">GET /api/trades/performance</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/trades/history', 'Recent Sniper Trades')">GET /api/trades/history</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/analytics/repricing-events', 'Repricing Catch-Up Cycles')">GET /api/analytics/repricing-events</button>
+              </div>
+            </div>
+
+            <!-- Category 3: System & Storage -->
+            <div class="api-cat-card">
+              <div class="api-cat-title">⚙️ System & State</div>
+              <div class="api-cat-buttons">
+                <button class="q-btn" onclick="selectAndQueryApi('/api/wallet', 'Wallet Public Address & Balances')">GET /api/wallet</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/settings', 'System Configuration & Risk')">GET /api/settings</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/system/database-size', 'Database Storage Size')">GET /api/system/database-size</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/system/resources', 'Host CPU & RAM Resources')">GET /api/system/resources</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/system/persistence', 'Persistence Status')">GET /api/system/persistence</button>
+                <button class="q-btn" onclick="selectAndQueryApi('/api/system/health', 'System Health Check')">GET /api/system/health</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- API Response Viewer Panel -->
+          <div class="api-response-panel">
+            <div class="api-response-header">
+              <div id="json-preview-title" class="mono">QUERY RESULT</div>
+              <div class="api-response-meta">
+                <span id="api-status-badge" class="badge badge-info mono">READY</span>
+                <span id="api-latency-badge" class="mono" style="font-size: 11px; color: var(--text-muted);">-- ms</span>
+              </div>
+            </div>
+            <div id="json-preview-container">
+              <button class="close-preview-btn" onclick="closePreview()" style="display: none;">✕</button>
+              <pre id="json-preview-content" class="mono">Click any endpoint above or click "Send Request" to inspect live response payload.</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Import Wallet Modal -->
+  <div id="import-wallet-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">Import Ethereum Private Key</div>
+        <button class="modal-close" onclick="closeImportWalletModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px;">
+          Paste your existing Ethereum private key (hex format, with or without 0x prefix). The server will derive its public address and generate a corresponding Lighter zk-key pair.
+        </p>
+        <div class="form-group">
+          <label class="form-label">Private Key</label>
+          <input type="password" class="form-input mono" id="import-privkey-input" placeholder="0x..." />
+        </div>
+        <div id="import-error-msg" style="color: var(--red); font-size: 12px; margin-top: 8px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeImportWalletModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitImportWallet()">Confirm Import</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/static/charts.js?v=2.4.0"></script>
+  <script src="/static/app.js?v=2.4.0"></script>
+</body>
+</html>

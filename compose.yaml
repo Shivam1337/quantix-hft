@@ -1,0 +1,49 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lead-lag-app
+    restart: unless-stopped
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8765"
+      DATABASE_URL: postgresql://lead_lag:lead_lag_dev_only@postgres:5432/lead_lag
+      UVICORN_GRACEFUL_SHUTDOWN_SECONDS: "5"
+      GRACEFUL_SHUTDOWN_SECONDS: "25"
+    ports:
+      - "127.0.0.1:8765:8765"
+    stop_signal: SIGTERM
+    stop_grace_period: 35s
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "from urllib.request import urlopen; import json; response=json.load(urlopen('http://127.0.0.1:8765/api/system/readiness', timeout=2)); raise SystemExit(0 if response['ready'] else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: lead-lag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lead_lag
+      POSTGRES_USER: lead_lag
+      POSTGRES_PASSWORD: lead_lag_dev_only
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - lead_lag_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lead_lag -d lead_lag"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  lead_lag_postgres_data:

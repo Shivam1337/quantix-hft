@@ -35,8 +35,10 @@ services:
       POSTGRES_DB: lead_lag
       POSTGRES_USER: lead_lag
       POSTGRES_PASSWORD: lead_lag_dev_only
-    ports:
-      - "127.0.0.1:5432:5432"
+    # Internal network only: app connects via postgres:5432.
+    # If host access is needed for local tools, bind to a non-conflicting port like "127.0.0.1:5433:5432"
+    # ports:
+    #   - "127.0.0.1:5433:5432"
     volumes:
       - lead_lag_postgres_data:/var/lib/postgresql/data
     healthcheck:

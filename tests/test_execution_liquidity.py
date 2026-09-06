@@ -168,6 +168,61 @@ class VisibleLiquiditySizingTests(unittest.TestCase):
         self.assertGreater(above_floor.notional_usd, 10.0)
         self.assertTrue(above_floor.meets_minimums)
 
+    def test_slippage_buffer_extends_ioc_limit_for_long_bounded_by_profitability(self):
+        order = calculate_executable_order(
+            side="LONG",
+            bids=[],
+            asks=[["100.0", "0.05000"], ["100.1", "0.06000"], ["100.2", "0.07000"]],
+            limit_price=108.0,
+            notional_cap_usd=2500.0,
+            max_levels=3,
+            slippage_buffer_usd=3.0,
+        )
+        self.assertEqual(100.2, order.ladder_limit_price)
+        self.assertEqual(103.2, order.limit_price)
+        self.assertEqual(108.0, order.profitability_limit_price)
+
+    def test_slippage_buffer_clamps_at_profitability_limit_for_long(self):
+        order = calculate_executable_order(
+            side="LONG",
+            bids=[],
+            asks=[["100.0", "0.05000"], ["100.1", "0.06000"], ["100.2", "0.07000"]],
+            limit_price=102.5,
+            notional_cap_usd=2500.0,
+            max_levels=3,
+            slippage_buffer_usd=3.0,
+        )
+        self.assertEqual(100.2, order.ladder_limit_price)
+        self.assertEqual(102.5, order.limit_price)
+
+    def test_slippage_buffer_extends_ioc_limit_for_short_bounded_by_profitability(self):
+        order = calculate_executable_order(
+            side="SHORT",
+            bids=[["100.0", "0.10000"], ["99.9", "0.12000"], ["99.8", "0.14000"]],
+            asks=[],
+            limit_price=92.0,
+            notional_cap_usd=2500.0,
+            max_levels=3,
+            slippage_buffer_usd=3.0,
+        )
+        self.assertEqual(99.8, order.ladder_limit_price)
+        self.assertEqual(96.8, order.limit_price)
+        self.assertEqual(92.0, order.profitability_limit_price)
+
+    def test_slippage_buffer_clamps_at_profitability_limit_for_short(self):
+        order = calculate_executable_order(
+            side="SHORT",
+            bids=[["100.0", "0.10000"], ["99.9", "0.12000"], ["99.8", "0.14000"]],
+            asks=[],
+            limit_price=98.0,
+            notional_cap_usd=2500.0,
+            max_levels=3,
+            slippage_buffer_usd=3.0,
+        )
+        self.assertEqual(99.8, order.ladder_limit_price)
+        self.assertEqual(98.0, order.limit_price)
+
 
 if __name__ == "__main__":
     unittest.main()
+

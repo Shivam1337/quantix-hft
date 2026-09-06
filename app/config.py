@@ -53,6 +53,12 @@ EXECUTION_LIQUIDITY_PARTICIPATION = min(
     1.0,
     max(0.0, float(os.getenv("EXECUTION_LIQUIDITY_PARTICIPATION", "0.50"))),
 )
+# Cushion in USD added to the deepest ladder tick to absorb in-flight quote
+# movement on the exchange, while remaining strictly bounded by profitability_limit.
+EXECUTION_SLIPPAGE_BUFFER_USD = max(
+    0.0,
+    float(os.getenv("EXECUTION_SLIPPAGE_BUFFER_USD", "3.0")),
+)
 
 # Capital Management & Leverage Parameters
 ACCOUNT_BASE_BALANCE_USD = float(os.getenv("ACCOUNT_BASE_BALANCE_USD", "100.0"))  # Base account equity ($100)

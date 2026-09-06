@@ -21,6 +21,7 @@ from app.config import (
     MIN_LAG_TRIGGER,
     LADDER_MIN_EXPECTED_PROFIT_USD,
     EXECUTION_LIQUIDITY_PARTICIPATION,
+    EXECUTION_SLIPPAGE_BUFFER_USD,
     MAX_EXECUTION_BOOK_LEVELS,
     REVERSAL_INVALIDATION,
     STOP_LOSS_DRAWDOWN,
@@ -54,6 +55,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
         self.ladder_min_expected_profit_usd = LADDER_MIN_EXPECTED_PROFIT_USD
         self.max_execution_book_levels = MAX_EXECUTION_BOOK_LEVELS
         self.execution_liquidity_participation = EXECUTION_LIQUIDITY_PARTICIPATION
+        self.execution_slippage_buffer_usd = EXECUTION_SLIPPAGE_BUFFER_USD
 
         # Dynamic Capital & Leverage Management
         self._custom_base_balance_usd: Optional[float] = None
@@ -190,6 +192,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
             "visible_liquidity_btc": executable.visible_size_btc,
             "visible_liquidity_notional_usd": executable.visible_notional_usd,
             "execution_price_limit": executable.limit_price,
+            "ladder_price_limit": executable.ladder_limit_price,
             "profitability_limit_price": executable.profitability_limit_price,
             "order_limit_notional_usd": executable.limit_notional_usd,
             "worst_case_notional_usd": executable.worst_case_notional_usd,
@@ -651,6 +654,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 notional_cap_usd=calc["notional_usd"],
                 max_levels=self.max_execution_book_levels,
                 liquidity_participation=self.execution_liquidity_participation,
+                slippage_buffer_usd=self.execution_slippage_buffer_usd,
             )
             if not executable.meets_minimums:
                 return self._reject_for_unexecutable_depth(
@@ -681,6 +685,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 "visible_liquidity_btc": executable.visible_size_btc,
                 "visible_liquidity_notional_usd": executable.visible_notional_usd,
                 "execution_price_limit": executable.limit_price,
+                "ladder_price_limit": executable.ladder_limit_price,
                 "profitability_limit_price": executable.profitability_limit_price,
                 "order_limit_notional_usd": executable.limit_notional_usd,
                 "worst_case_notional_usd": executable.worst_case_notional_usd,
@@ -738,6 +743,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 "visible_liquidity_btc": executable.visible_size_btc,
                 "visible_liquidity_notional_usd": executable.visible_notional_usd,
                 "execution_price_limit": executable.limit_price,
+                "ladder_price_limit": executable.ladder_limit_price,
                 "profitability_limit_price": executable.profitability_limit_price,
                 "order_limit_notional_usd": executable.limit_notional_usd,
                 "worst_case_notional_usd": executable.worst_case_notional_usd,
@@ -771,6 +777,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 notional_cap_usd=calc["notional_usd"],
                 max_levels=self.max_execution_book_levels,
                 liquidity_participation=self.execution_liquidity_participation,
+                slippage_buffer_usd=self.execution_slippage_buffer_usd,
             )
             if not executable.meets_minimums:
                 return self._reject_for_unexecutable_depth(
@@ -801,6 +808,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 "visible_liquidity_btc": executable.visible_size_btc,
                 "visible_liquidity_notional_usd": executable.visible_notional_usd,
                 "execution_price_limit": executable.limit_price,
+                "ladder_price_limit": executable.ladder_limit_price,
                 "profitability_limit_price": executable.profitability_limit_price,
                 "order_limit_notional_usd": executable.limit_notional_usd,
                 "worst_case_notional_usd": executable.worst_case_notional_usd,
@@ -858,6 +866,7 @@ class SniperEngine(LiveExecutionMixin, ExecutionTelemetryMixin):
                 "visible_liquidity_btc": executable.visible_size_btc,
                 "visible_liquidity_notional_usd": executable.visible_notional_usd,
                 "execution_price_limit": executable.limit_price,
+                "ladder_price_limit": executable.ladder_limit_price,
                 "profitability_limit_price": executable.profitability_limit_price,
                 "order_limit_notional_usd": executable.limit_notional_usd,
                 "worst_case_notional_usd": executable.worst_case_notional_usd,

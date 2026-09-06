@@ -30,6 +30,7 @@ class ExecutableOrder:
     limit_notional_usd: float
     vwap_price: float
     levels_used: int
+    ladder_limit_price: float = 0.0
 
     @property
     def meets_minimums(self) -> bool:
@@ -81,33 +82,25 @@ def calculate_executable_order(
     notional_cap_usd: float,
     max_levels: int = 1,
     liquidity_participation: float = 1.0,
+    slippage_buffer_usd: float = 0.0,
 ) -> ExecutableOrder:
     """Cap an IOC order to a fraction of displayed depth and its notional ceiling.
 
     LONG/BUY consumes asks at or below ``limit_price``. SHORT/SELL consumes bids
-    at or above it. ``max_levels`` bounds the price ladder and
-    ``liquidity_participation`` caps both the usable share of each level and the
-    configured notional ceiling. The returned ``limit_price`` is the deepest
-    level actually used, so a live IOC never sweeps past the displayed ladder
-    simply because the profitability bound was farther away.
+    at or above it. ``max_levels`` bounds the ladder, ``liquidity_participation``
+    caps each level's size, and ``slippage_buffer_usd`` extends the IOC limit beyond
+    the ladder tick to absorb in-flight quote moves up to ``profitability_limit``.
     """
     direction = _normalise_side(side)
     profitability_limit = _positive_decimal(limit_price)
     cap = _positive_decimal(notional_cap_usd)
     participation = _normalise_liquidity_participation(liquidity_participation)
-    levels = _eligible_levels(direction, bids, asks, profitability_limit)
-    levels = levels[:_normalise_max_levels(max_levels)]
+    levels = _eligible_levels(direction, bids, asks, profitability_limit)[:_normalise_max_levels(max_levels)]
 
     visible_size = sum((size for _, size in levels), Decimal())
     visible_notional = sum((price * size for price, size in levels), Decimal())
     if profitability_limit is None or cap is None or not levels:
-        return _empty_order(
-            direction,
-            profitability_limit,
-            cap,
-            visible_size,
-            visible_notional,
-        )
+        return _empty_order(direction, profitability_limit, cap, visible_size, visible_notional)
 
     executable_size = Decimal()
     executable_notional = Decimal()
@@ -132,11 +125,23 @@ def calculate_executable_order(
         order_limit = price
         levels_used += 1
 
+    buffer = _positive_or_zero_decimal(slippage_buffer_usd) or Decimal()
+    if order_limit and buffer > 0 and profitability_limit is not None:
+        if direction == "LONG":
+            raw_limit = min(profitability_limit, order_limit + buffer)
+            execution_limit = _round_to_price_tick(raw_limit, ROUND_FLOOR)
+        else:
+            raw_limit = max(profitability_limit, order_limit - buffer)
+            execution_limit = _round_to_price_tick(raw_limit, ROUND_CEILING)
+    else:
+        execution_limit = order_limit
+
     limit_notional = executable_size * order_limit if order_limit else Decimal()
-    worst_case_notional = executable_size * worst_observed_price if executable_size else Decimal()
+    worst_price = max(worst_observed_price, execution_limit) if direction == "LONG" and execution_limit else worst_observed_price
+    worst_case_notional = executable_size * worst_price if executable_size else Decimal()
     return ExecutableOrder(
         side=direction,
-        limit_price=float(order_limit),
+        limit_price=float(execution_limit),
         profitability_limit_price=float(profitability_limit),
         requested_notional_usd=float(cap),
         visible_size_btc=float(_floor_btc_size(visible_size)),
@@ -147,6 +152,7 @@ def calculate_executable_order(
         limit_notional_usd=float(limit_notional),
         vwap_price=round(float(executable_notional / executable_size), 8) if executable_size else 0.0,
         levels_used=levels_used,
+        ladder_limit_price=float(order_limit),
     )
 
 
@@ -188,18 +194,18 @@ def _parse_level(level: Any) -> Optional[Tuple[Decimal, Decimal]]:
 
 def _positive_decimal(value: Any) -> Optional[Decimal]:
     try:
-        decimal = Decimal(str(value))
+        dec = Decimal(str(value))
+        return dec if dec.is_finite() and dec > 0 else None
     except (InvalidOperation, TypeError, ValueError):
         return None
-    return decimal if decimal.is_finite() and decimal > 0 else None
 
 
 def _positive_or_zero_decimal(value: Any) -> Optional[Decimal]:
     try:
-        decimal = Decimal(str(value))
+        dec = Decimal(str(value))
+        return dec if dec.is_finite() and dec >= 0 else None
     except (InvalidOperation, TypeError, ValueError):
         return None
-    return decimal if decimal.is_finite() and decimal >= 0 else None
 
 
 def _floor_btc_size(value: Decimal) -> Decimal:
@@ -219,12 +225,10 @@ def _normalise_max_levels(value: Any) -> int:
 
 def _normalise_liquidity_participation(value: Any) -> Decimal:
     try:
-        participation = Decimal(str(value))
+        part = Decimal(str(value))
+        return min(Decimal(1), max(Decimal(), part)) if part.is_finite() else Decimal()
     except (InvalidOperation, TypeError, ValueError):
         return Decimal()
-    if not participation.is_finite():
-        return Decimal()
-    return min(Decimal(1), max(Decimal(), participation))
 
 
 def _empty_order(
@@ -235,16 +239,11 @@ def _empty_order(
     visible_notional: Decimal,
 ) -> ExecutableOrder:
     return ExecutableOrder(
-        side=side,
-        limit_price=0.0,
+        side=side, limit_price=0.0,
         profitability_limit_price=float(profitability_limit) if profitability_limit is not None else 0.0,
         requested_notional_usd=float(cap) if cap is not None else 0.0,
         visible_size_btc=float(_floor_btc_size(visible_size)),
         visible_notional_usd=float(visible_notional),
-        size_btc=0.0,
-        notional_usd=0.0,
-        worst_case_notional_usd=0.0,
-        limit_notional_usd=0.0,
-        vwap_price=0.0,
-        levels_used=0,
+        size_btc=0.0, notional_usd=0.0, worst_case_notional_usd=0.0,
+        limit_notional_usd=0.0, vwap_price=0.0, levels_used=0,
     )

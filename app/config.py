@@ -89,6 +89,9 @@ POSTGRES_CHART_RETENTION = int(os.getenv("POSTGRES_CHART_RETENTION", "50000"))
 PERSISTED_CHART_SAMPLE_INTERVAL_SECONDS = float(
     os.getenv("PERSISTED_CHART_SAMPLE_INTERVAL_SECONDS", "1.0")
 )
+# Real mode displays exchange-reported account values, refreshed independently
+# of the high-frequency market-data callbacks.
+REAL_ACCOUNT_REFRESH_SECONDS = max(0.5, float(os.getenv("REAL_ACCOUNT_REFRESH_SECONDS", "2.0")))
 
 
 # Fee Schedules

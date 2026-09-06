@@ -10,7 +10,6 @@ import time
 import collections
 from datetime import datetime
 from typing import Optional, Dict, List, Any
-import asyncio
 from app.config import (
     ACCOUNT_BASE_BALANCE_USD,
     COOLDOWN_SECONDS,
@@ -34,11 +33,13 @@ from app.core.execution import (
     calculate_executable_order,
     calculate_profitable_price_limit,
 )
+from app.core.live_execution import LiveExecutionMixin
+from app.core.performance_metrics import build_performance
 from app.core.settings_manager import settings_manager
 from app.core.wallet_manager import wallet_manager
 
 
-class SniperEngine:
+class SniperEngine(LiveExecutionMixin):
     def __init__(self):
         self.min_lag_trigger = MIN_LAG_TRIGGER
         self.min_entry_velocity = MIN_ENTRY_VELOCITY_USD
@@ -60,6 +61,7 @@ class SniperEngine:
         self.trade_counter = 0
         self.active_trade: Optional[Dict[str, Any]] = None
         self.closed_trades: collections.deque = collections.deque(maxlen=MAX_CLOSED_TRADES_HISTORY)
+        self._init_live_execution()
 
         self.current_decision: Dict[str, Any] = {
             "stance": "MONITORING",
@@ -106,68 +108,37 @@ class SniperEngine:
             "paper_only": True,
         }
 
-    def _fire_live_open(self, tr: Dict[str, Any]) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._execute_live_open(tr))
-        except RuntimeError:
-            pass
-
-    async def _execute_live_open(self, tr: Dict[str, Any]) -> None:
-        from app.core.lighter_client import lighter_client
-        limit_price = tr.get("execution_price_limit", tr["entry_px"])
-        success, tx_hash, err = await lighter_client.open_snipe_order(
-            side=tr["side"],
-            size_btc=tr["size_btc"],
-            limit_price=limit_price,
-            trade_id=tr["id"],
-        )
-        if success:
-            tr["tx_hash"] = tx_hash
-            tr["order_status"] = "SUBMITTED"
-        else:
-            tr["order_error"] = err
-            tr["order_status"] = "FAILED"
-
-    def _fire_live_close(self, rec: Dict[str, Any]) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._execute_live_close(rec))
-        except RuntimeError:
-            pass
-
-    async def _execute_live_close(self, rec: Dict[str, Any]) -> None:
-        from app.core.lighter_client import lighter_client
-        success, tx_hash, err = await lighter_client.close_snipe_order(
-            side=rec["side"],
-            size_btc=rec["size_btc"],
-            limit_price=rec["exit_px"],
-            trade_id=rec["id"],
-        )
-        if success:
-            rec["exit_tx_hash"] = tx_hash
-            rec["order_status"] = "CLOSED"
-        else:
-            rec["exit_order_error"] = err
-
     def calculate_trade_size(self, entry_price: float) -> Dict[str, float]:
         """Calculates dynamic position size and notional from current account equity and leverage."""
         lev = settings_manager.leverage
         frac = settings_manager.trade_margin_fraction
-        if settings_manager.is_real_mode and wallet_manager._balances.get("lighter_collateral_usd", 0.0) > 0:
-            current_balance = float(wallet_manager._balances["lighter_collateral_usd"])
+        is_real = settings_manager.is_real_mode
+        if is_real:
+            balances = wallet_manager._balances
+            try:
+                current_balance = max(
+                    0.0,
+                    float(balances.get("lighter_account_equity_usd", balances.get("lighter_collateral_usd", 0.0))),
+                )
+            except (TypeError, ValueError):
+                current_balance = 0.0
+            try:
+                reported_free_margin = balances.get("lighter_free_margin_usd")
+                free_margin = current_balance if reported_free_margin is None else max(0.0, float(reported_free_margin))
+            except (TypeError, ValueError):
+                free_margin = 0.0
+            margin_allocated = round(min(current_balance * frac, free_margin), 2)
         else:
             net_pnl = sum(float(t.get("net_pnl", 0.0)) for t in self.closed_trades)
             current_balance = max(10.0, self.base_balance_usd + net_pnl)
-
-        margin_allocated = round(current_balance * frac, 2)
+            margin_allocated = round(current_balance * frac, 2)
         notional = round(margin_allocated * lev, 2)
         if entry_price > 0:
-            size_btc = round(notional / entry_price, 4)
+            size_btc = round(notional / entry_price, 5 if is_real else 4)
         else:
-            size_btc = self.trade_size_btc
+            size_btc = 0.0 if is_real else self.trade_size_btc
         return {
-            "size_btc": max(0.0001, size_btc),
+            "size_btc": size_btc if is_real else max(0.0001, size_btc),
             "margin_allocated_usd": margin_allocated,
             "leverage": lev,
             "notional_usd": notional,
@@ -340,7 +311,7 @@ class SniperEngine:
 
 
     def abort_active_trade_for_shutdown(self) -> Optional[Dict[str, Any]]:
-        """Drop an in-flight paper position without manufacturing an exit or realized PnL.
+        """Audit an in-flight position without manufacturing an exit or realized PnL.
 
         A deployment restart cannot prove an executable exit price. The caller records
         an audit event instead of adding this position to closed-trade performance.
@@ -349,18 +320,22 @@ class SniperEngine:
             return None
         interrupted = copy.deepcopy(self.active_trade)
         self.active_trade = None
+        is_real = interrupted.get("mode") == "REAL"
         self.current_decision = {
             "stance": "SHUTDOWN",
             "action": "NONE",
             "target_exchange": "Lighter.xyz",
             "elected_leader": interrupted.get("leader_name", "UNAVAILABLE"),
             "signal_strength_usd": interrupted.get("expected_lag", 0.0),
-            "rationale": "Paper position interrupted by graceful process shutdown; no exit or realized PnL was recorded.",
+            "rationale": (
+                "Live order/position interrupted by shutdown; reconcile the Lighter account before restart."
+                if is_real else "Paper position interrupted by graceful process shutdown; no exit or realized PnL was recorded."
+            ),
             "rejection_reason": "PROCESS_SHUTDOWN",
             "target_price": None,
             "stop_loss_price": None,
             "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "paper_only": True,
+            "paper_only": not is_real,
         }
         return interrupted
 
@@ -400,6 +375,8 @@ class SniperEngine:
         # -------------------------------------------------------------
         if self.active_trade is not None:
             tr = self.active_trade
+            if tr.get("mode") == "REAL" and tr.get("execution_state") != "OPEN":
+                return self._live_execution_pending_summary(leader_name, now_str)
             hold_sec = round(now - tr["entry_ts"], 1)
             tr["hold_seconds"] = hold_sec
 
@@ -456,10 +433,28 @@ class SniperEngine:
                     exit_reason = f"HARD_STOP (Exceeded ${self.stop_loss_drawdown} drawdown)"
 
             # Execute position exit if conditions triggered
+            if exit_px is not None and tr.get("mode") == "REAL":
+                self._fire_live_close(tr, exit_px, exit_reason)
+                self.current_decision = {
+                    "stance": "EXIT_PENDING",
+                    "action": "CLOSE",
+                    "target_exchange": "Lighter.xyz",
+                    "elected_leader": leader_name,
+                    "signal_strength_usd": 0.0,
+                    "rationale": f"Submitted reduce-only {tr['side']} exit on Lighter at ${exit_px:,.1f}; awaiting confirmed fill. Reason: {exit_reason}.",
+                    "rejection_reason": None,
+                    "target_price": None,
+                    "stop_loss_price": None,
+                    "timestamp": now_str,
+                    "trading_mode": settings_manager.trading_mode,
+                    "paper_only": False,
+                }
+                return self.get_summary()
+
             if exit_px is not None:
                 gross_pnl = (exit_px - tr["entry_px"]) * tr["size"] if tr["side"] == "LONG" else (tr["entry_px"] - exit_px) * tr["size"]
                 net_pnl = gross_pnl  # Lighter zero fees
-                is_real = settings_manager.is_real_mode
+                is_real = tr.get("mode") == "REAL"
 
                 closed_rec = {
                     "id": tr["id"],
@@ -486,9 +481,6 @@ class SniperEngine:
                     "tx_hash": tr.get("tx_hash"),
                     "cost_model": "Live on-chain Lighter execution" if is_real else "Displayed L2-ladder paper model only; excludes fill probability, impact, latency, funding, and liquidation costs.",
                 }
-                if is_real:
-                    self._fire_live_close(closed_rec)
-
                 self.closed_trades.appendleft(closed_rec)
                 self.last_close_ts = now
                 self.active_trade = None
@@ -525,7 +517,30 @@ class SniperEngine:
             return self.get_summary()
 
         # -------------------------------------------------------------
-        # 2. Check Cooldown
+        # 2. Global Entry Kill Switch
+        # Existing positions remain under risk management above. A generic pause
+        # must never strand a real position or an already-submitted IOC order.
+        # -------------------------------------------------------------
+        if not settings_manager.trading_enabled:
+            self.current_decision = {
+                "stance": "PAUSED",
+                "action": "NONE",
+                "target_exchange": "Lighter.xyz",
+                "elected_leader": leader_name,
+                "signal_strength_usd": 0.0,
+                "rationale": "Global trading activity is paused. New simulation and REAL entries are blocked; market data remains active.",
+                "rejection_reason": "GLOBAL_TRADING_PAUSED",
+                "target_price": None,
+                "stop_loss_price": None,
+                "timestamp": now_str,
+                "trading_mode": settings_manager.trading_mode,
+                "trading_enabled": False,
+                "paper_only": not settings_manager.is_real_mode,
+            }
+            return self.get_summary()
+
+        # -------------------------------------------------------------
+        # 3. Check Cooldown
         # -------------------------------------------------------------
         time_since_close = now - self.last_close_ts
         if time_since_close < self.cooldown_seconds:
@@ -545,7 +560,7 @@ class SniperEngine:
             return self.get_summary()
 
         # -------------------------------------------------------------
-        # 3. Consensus Filter: this experiment requires major-venue agreement.
+        # 4. Consensus Filter: this experiment requires major-venue agreement.
         # A single fast quote is diagnostic evidence, not a paper-trade signal.
         # -------------------------------------------------------------
         if consensus_status not in ENTRY_CONSENSUS_STATUSES:
@@ -565,12 +580,48 @@ class SniperEngine:
             return self.get_summary()
 
         # -------------------------------------------------------------
-        # 4. Check for New Lead-Lag Sniper Signal vs Basis-Adjusted Leader
+        # 5. Check for New Lead-Lag Sniper Signal vs Basis-Adjusted Leader
         # -------------------------------------------------------------
         current_min_lag = settings_manager.min_lag_trigger
         long_lag = round(adj_leader_px - l_ask, 2)
         short_lag = round(l_bid - adj_leader_px, 2)
         is_real = settings_manager.is_real_mode
+        if is_real and not wallet_manager._balances.get("lighter_account_data_available"):
+            self.current_decision = {
+                "stance": "MONITORING",
+                "action": "NONE",
+                "target_exchange": "Lighter.xyz",
+                "elected_leader": leader_name,
+                "signal_strength_usd": 0.0,
+                "rationale": "REAL mode is waiting for a verified Lighter account equity snapshot; no order will use a simulated balance.",
+                "rejection_reason": "REAL_ACCOUNT_SNAPSHOT_UNAVAILABLE",
+                "target_price": None,
+                "stop_loss_price": None,
+                "timestamp": now_str,
+                "trading_mode": settings_manager.trading_mode,
+                "paper_only": False,
+            }
+            return self.get_summary()
+        try:
+            reported_free_margin = float(wallet_manager._balances.get("lighter_free_margin_usd", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            reported_free_margin = 0.0
+        if is_real and reported_free_margin <= 0.0:
+            self.current_decision = {
+                "stance": "MONITORING",
+                "action": "NONE",
+                "target_exchange": "Lighter.xyz",
+                "elected_leader": leader_name,
+                "signal_strength_usd": 0.0,
+                "rationale": "REAL mode has no exchange-reported free margin; no order will use a simulated balance.",
+                "rejection_reason": "REAL_FREE_MARGIN_UNAVAILABLE",
+                "target_price": None,
+                "stop_loss_price": None,
+                "timestamp": now_str,
+                "trading_mode": settings_manager.trading_mode,
+                "paper_only": False,
+            }
+            return self.get_summary()
 
         # Condition A: LONG Snipe
         # - Lighter Ask is cheaper than Basis-Adjusted Leader by >= MIN_LAG_TRIGGER
@@ -651,6 +702,13 @@ class SniperEngine:
                 },
                 "mode": "REAL" if is_real else "SIMULATION",
                 "paper_only": not is_real,
+                "planned_size_btc": trade_size,
+                "planned_entry_px": entry_px,
+                "planned_notional_usd": notional_usd,
+                "signal_ts": now,
+                "execution_state": "ENTRY_SUBMITTED" if is_real else "OPEN",
+                "order_status": "PENDING_SUBMISSION" if is_real else "SIMULATED",
+                "latencies_ms": {},
                 "tx_hash": None,
             }
             if is_real:
@@ -762,6 +820,13 @@ class SniperEngine:
                 },
                 "mode": "REAL" if is_real else "SIMULATION",
                 "paper_only": not is_real,
+                "planned_size_btc": trade_size,
+                "planned_entry_px": entry_px,
+                "planned_notional_usd": notional_usd,
+                "signal_ts": now,
+                "execution_state": "ENTRY_SUBMITTED" if is_real else "OPEN",
+                "order_status": "PENDING_SUBMISSION" if is_real else "SIMULATED",
+                "latencies_ms": {},
                 "tx_hash": None,
             }
             if is_real:
@@ -825,89 +890,22 @@ class SniperEngine:
 
     def get_performance(self) -> Dict[str, Any]:
         mode = settings_manager.trading_mode
-        is_real = settings_manager.is_real_mode
-        lev = settings_manager.leverage
-        frac = settings_manager.trade_margin_fraction
-
-        total = len(self.closed_trades)
-        net_pnl = round(sum(t.get("net_pnl", 0.0) for t in self.closed_trades), 2)
-        gross_pnl = round(sum(t.get("gross_pnl", 0.0) for t in self.closed_trades), 2)
-
-        if is_real and wallet_manager._balances.get("lighter_collateral_usd", 0.0) > 0:
-            account_balance = float(wallet_manager._balances["lighter_collateral_usd"])
-        else:
-            account_balance = round(self.base_balance_usd + net_pnl, 2)
-
-        floating_pnl = round(self.active_trade.get("floating_pnl_usd", 0.0), 2) if self.active_trade else 0.0
-        account_equity = round(account_balance + floating_pnl, 2)
-        margin_used = round(self.active_trade.get("margin_allocated_usd", 0.0), 2) if self.active_trade else 0.0
-        free_margin = round(account_equity - margin_used, 2)
-        target_margin = round(account_balance * frac, 2)
-        target_notional = round(target_margin * lev, 2)
-        margin_utilization = round((margin_used / account_equity) * 100, 1) if account_equity > 0 else 0.0
-        rom_pct = round((net_pnl / target_margin) * 100, 2) if target_margin > 0 else 0.0
-
-        if total == 0:
-            return {
-                "total_trades": 0,
-                "wins": 0,
-                "losses": 0,
-                "win_rate": 0.0,
-                "gross_pnl": 0.0,
-                "fees_saved_vs_poly": 0.0,
-                "net_pnl": 0.0,
-                "avg_hold_sec": 0.0,
-                "profit_factor": 0.0,
-                "account_base_balance_usd": self.base_balance_usd,
-                "account_balance_usd": account_balance,
-                "account_equity_usd": account_equity,
-                "margin_used_usd": margin_used,
-                "free_margin_usd": free_margin,
-                "leverage": lev,
-                "margin_utilization_pct": margin_utilization,
-                "target_margin_usd": target_margin,
-                "target_notional_usd": target_notional,
-                "return_on_margin_pct": 0.0,
-                "trading_mode": mode,
-                "is_real_mode": is_real,
-                "paper_only": not is_real,
-                "cost_model": "Live on-chain Lighter execution" if is_real else "Displayed L2-ladder paper model with 50x leverage on Lighter.xyz (0% fees).",
-            }
-
-        wins = sum(1 for t in self.closed_trades if t["is_win"])
-        losses = total - wins
-        win_rate = round((wins / total) * 100, 1)
-        avg_hold = round(sum(t["hold_sec"] for t in self.closed_trades) / total, 1)
-        fees_saved = round(sum(t.get("notional_usd", 2500.0) * 0.0008 for t in self.closed_trades), 2)
-        gross_wins = sum(t["gross_pnl"] for t in self.closed_trades if t["gross_pnl"] > 0)
-        gross_losses = abs(sum(t["gross_pnl"] for t in self.closed_trades if t["gross_pnl"] < 0))
-        profit_factor = round(gross_wins / gross_losses, 2) if gross_losses > 0 else (99.0 if gross_wins > 0 else 0.0)
-
-        return {
-            "total_trades": total,
-            "wins": wins,
-            "losses": losses,
-            "win_rate": win_rate,
-            "gross_pnl": gross_pnl,
-            "fees_saved_vs_poly": fees_saved,
-            "net_pnl": net_pnl,
-            "avg_hold_sec": avg_hold,
-            "profit_factor": profit_factor,
-            "account_base_balance_usd": self.base_balance_usd,
-            "account_balance_usd": account_balance,
-            "account_equity_usd": account_equity,
-            "margin_used_usd": margin_used,
-            "free_margin_usd": free_margin,
-            "leverage": lev,
-            "margin_utilization_pct": margin_utilization,
-            "target_margin_usd": target_margin,
-            "target_notional_usd": target_notional,
-            "return_on_margin_pct": rom_pct,
-            "trading_mode": mode,
-            "is_real_mode": is_real,
-            "paper_only": not is_real,
-            "cost_model": "Live on-chain Lighter execution" if is_real else "Displayed L2-ladder paper model with 50x leverage on Lighter.xyz (0% fees).",
-        }
+        simulation_net_pnl = sum(
+            float(trade.get("net_pnl", 0.0))
+            for trade in self.closed_trades
+            if str(trade.get("mode", "")).upper() != "REAL"
+        )
+        performance = build_performance(
+            closed_trades=self.closed_trades,
+            active_trade=self.active_trade,
+            mode=mode,
+            leverage=settings_manager.leverage,
+            margin_fraction=settings_manager.trade_margin_fraction,
+            simulation_balance=round(self.base_balance_usd + simulation_net_pnl, 2),
+            real_account=wallet_manager._balances,
+        )
+        performance["trading_enabled"] = settings_manager.trading_enabled
+        return performance
 
     def get_summary(self) -> Dict[str, Any]:
         return {
@@ -917,4 +915,5 @@ class SniperEngine:
             "performance": self.get_performance(),
             "trading_mode": settings_manager.trading_mode,
             "is_real_mode": settings_manager.is_real_mode,
+            "trading_enabled": settings_manager.trading_enabled,
         }

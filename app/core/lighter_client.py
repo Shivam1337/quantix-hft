@@ -8,7 +8,8 @@ import asyncio
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Optional, Tuple, Dict, Any
 import lighter
-from app.core.execution import MIN_EXECUTABLE_NOTIONAL_USD
+from app.core.execution import MIN_EXECUTABLE_NOTIONAL_USD, MIN_EXECUTABLE_SIZE_BTC
+from app.core.lighter_order_reconciliation import LighterOrderOutcome, LighterOrderReconciler
 from app.core.settings_manager import settings_manager
 
 logger = logging.getLogger("lighter_client")
@@ -17,6 +18,7 @@ BTC_MARKET_INDEX = 1
 BTC_SIZE_DECIMALS = 5   # 10^5 multiplier
 BTC_PRICE_DECIMALS = 1  # 10^1 multiplier
 MIN_ORDER_NOTIONAL = Decimal(str(MIN_EXECUTABLE_NOTIONAL_USD))
+MIN_ORDER_BASE_AMOUNT = int(Decimal(str(MIN_EXECUTABLE_SIZE_BTC)) * (10 ** BTC_SIZE_DECIMALS))
 
 
 class LighterClient:
@@ -75,8 +77,8 @@ class LighterClient:
         scaled_price = price * (10 ** BTC_PRICE_DECIMALS)
         if scaled_price != scaled_price.to_integral_value():
             return None, None, "Limit price does not match Lighter's 0.1 USD price increment."
-        if base_amount <= 0:
-            return None, None, "Order size is below Lighter's minimum base-unit precision."
+        if base_amount < MIN_ORDER_BASE_AMOUNT:
+            return None, None, "Order size is below Lighter's 0.00010 BTC minimum."
 
         executable_size = Decimal(base_amount) / (10 ** BTC_SIZE_DECIMALS)
         if executable_size * price <= MIN_ORDER_NOTIONAL:
@@ -96,6 +98,10 @@ class LighterClient:
         Returns: (success: bool, tx_hash: Optional[str], error_message: Optional[str])
         """
         async with self._lock:
+            # Re-check after waiting for the submission lock.  This prevents an
+            # entry queued behind another order from crossing the pause boundary.
+            if not settings_manager.trading_enabled:
+                return False, None, "Global trading activity is paused; live entry was not submitted."
             signer = self._get_signer()
             if not signer:
                 return False, None, "SignerClient not initialized: check account index and API key."
@@ -178,6 +184,30 @@ class LighterClient:
             except Exception as exc:
                 logger.exception("Exception closing Lighter live order: %s", exc)
                 return False, None, str(exc)
+
+    async def wait_for_order_outcome(
+        self,
+        *,
+        client_order_index: int,
+        submitted_at: Optional[float] = None,
+        timeout_seconds: float = 2.0,
+    ) -> Optional[LighterOrderOutcome]:
+        """Await a terminal IOC result from Lighter's authenticated account-order API."""
+        signer = self._get_signer()
+        if not signer:
+            raise RuntimeError("SignerClient not initialized while reconciling a live order.")
+        base_url, _ = self._get_base_url_and_chain_id()
+        reconciler = LighterOrderReconciler(
+            base_url=base_url,
+            account_index=settings_manager.account_index,
+            signer=signer,
+            api_key_index=settings_manager.api_key_index,
+        )
+        return await reconciler.wait_for_terminal_order(
+            client_order_index=client_order_index,
+            submitted_at=submitted_at,
+            timeout_seconds=timeout_seconds,
+        )
 
 
 # Global Singleton Instance

@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
 class UpdateSettingsRequest(BaseModel):
     trading_mode: Optional[str] = None
+    trading_enabled: Optional[bool] = None
     network: Optional[str] = None
     account_index: Optional[int] = None
     api_key_index: Optional[int] = None
@@ -28,6 +29,10 @@ class UpdateSettingsRequest(BaseModel):
 
 class SwitchModeRequest(BaseModel):
     mode: str
+
+
+class TradingActivityRequest(BaseModel):
+    enabled: bool
 
 
 @router.get("", response_model=Dict[str, Any])
@@ -64,9 +69,21 @@ async def switch_trading_mode(req: SwitchModeRequest):
     }
 
 
+@router.post("/trading-activity", response_model=Dict[str, Any])
+async def switch_trading_activity(req: TradingActivityRequest):
+    """Immediately pause or resume new trading entries in either execution mode."""
+    success, msg = settings_manager.set_trading_enabled(req.enabled)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    return {
+        "status": "success",
+        "message": msg,
+        "settings": settings_manager.get_summary(mask_keys=True),
+    }
+
+
 @router.post("/reset-simulation", response_model=Dict[str, Any])
 async def reset_simulation():
     """Resets paper trading history, engine stance, and starts a fresh simulation run."""
     from app.core.state_manager import state_manager
     return await state_manager.reset_simulation()
-

@@ -635,6 +635,7 @@ class StateManager:
             "trade_decision": sniper_data["decision"],
             "active_position": sniper_data["active_position"],
             "trading_performance": sniper_data["performance"],
+            "trading_enabled": sniper_data["trading_enabled"],
             "recent_trades": sniper_data["closed_trades"][:10],
             "lead_lag_analytics": analysis,
             "recent_repricing_events": self.lead_lag_analyzer.get_repricing_events()[:10],

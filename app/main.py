@@ -30,6 +30,7 @@ from app.core.market_feed import (
     polymarket_ws_task
 )
 from app.core.state_manager import state_manager
+from app.core.real_account_refresh import real_account_refresh_task
 from app.api.routes_market import router as market_router
 from app.api.routes_trades import router as trades_router
 from app.api.routes_analytics import router as analytics_router
@@ -59,6 +60,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(hyperliquid_ws_task(session)),
         asyncio.create_task(lighter_ws_task(session)),
         asyncio.create_task(polymarket_ws_task(session)),
+        asyncio.create_task(real_account_refresh_task()),
     ]
 
 

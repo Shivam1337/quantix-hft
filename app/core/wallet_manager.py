@@ -14,6 +14,7 @@ import aiohttp
 from eth_account import Account
 import lighter
 from app.config import SQLITE_DB_PATH
+from app.core.lighter_account import empty_lighter_account_balances, parse_lighter_account_response
 
 logger = logging.getLogger("wallet_manager")
 
@@ -36,10 +37,7 @@ class WalletManager:
         self._wallet_data: Dict[str, Any] = {}
         self._balances: Dict[str, Any] = {
             "arbitrum_eth": 0.0,
-            "lighter_collateral_usd": 0.0,
-            "lighter_free_margin_usd": 0.0,
-            "lighter_account_index": None,
-            "lighter_account_status": "UNREGISTERED",
+            **empty_lighter_account_balances(),
             "last_checked": None,
         }
         self._lock = asyncio.Lock()
@@ -275,10 +273,7 @@ class WalletManager:
         """Replaces the current wallet with a newly generated one."""
         self._balances = {
             "arbitrum_eth": 0.0,
-            "lighter_collateral_usd": 0.0,
-            "lighter_free_margin_usd": 0.0,
-            "lighter_account_index": None,
-            "lighter_account_status": "UNREGISTERED",
+            **empty_lighter_account_balances(),
             "last_checked": None,
         }
         return self._create_new_wallet_data()
@@ -349,11 +344,11 @@ class WalletManager:
             except Exception as e:
                 logger.debug("Arbitrum balance check skipped/failed: %s", e)
 
-            # 2. Lighter Account & Collateral via Lighter REST API
-            lighter_collateral = 0.0
-            lighter_free = 0.0
+            # 2. Lighter account equity/free margin via its public account API.
             account_index = self.lighter_account_index
-            account_status = "UNREGISTERED"
+            account_snapshot = empty_lighter_account_balances(
+                status="UNKNOWN" if account_index else "UNREGISTERED",
+            )
 
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=4.0)) as session:
@@ -372,26 +367,17 @@ class WalletManager:
                         acc_url = f"{LIGHTER_BASE_URL}/api/v1/account?by=index&value={account_index}"
                         async with session.get(acc_url) as resp:
                             if resp.status == 200:
-                                d = await resp.json()
-                                detailed = d.get("account", {})
-                                if detailed:
-                                    status_code = detailed.get("status")
-                                    account_status = "ACTIVE" if status_code == 1 else "INACTIVE"
-                                    raw_collateral = detailed.get("collateral", "0")
-                                    try:
-                                        lighter_collateral = round(float(raw_collateral), 2)
-                                        lighter_free = lighter_collateral
-                                    except (ValueError, TypeError):
-                                        pass
+                                account_snapshot = parse_lighter_account_response(await resp.json()) or account_snapshot
+                                account_index = account_snapshot.get("lighter_account_index") or account_index
+                                if account_index and self.lighter_account_index != account_index:
+                                    self.set_lighter_account_index(account_index)
             except Exception as e:
                 logger.debug("Lighter account check skipped/failed: %s", e)
 
             self._balances = {
                 "arbitrum_eth": arb_eth,
-                "lighter_collateral_usd": lighter_collateral,
-                "lighter_free_margin_usd": lighter_free,
+                **account_snapshot,
                 "lighter_account_index": account_index,
-                "lighter_account_status": account_status,
                 "last_checked": now_str,
             }
             return self._balances

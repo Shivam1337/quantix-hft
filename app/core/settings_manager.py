@@ -20,6 +20,7 @@ class SettingsManager:
 
     DEFAULT_SETTINGS = {
         "trading_mode": "SIMULATION",  # "SIMULATION" or "REAL"
+        "trading_enabled": True,        # Global entry kill switch for both modes
         "network": "mainnet",          # "mainnet" or "testnet"
         "account_index": None,
         "api_key_index": 4,
@@ -165,6 +166,14 @@ class SettingsManager:
         return self.trading_mode == "REAL"
 
     @property
+    def trading_enabled(self) -> bool:
+        """Whether new simulated or real entries are globally permitted."""
+        value = self._settings.get("trading_enabled", True)
+        if isinstance(value, str):
+            return value.strip().lower() not in {"0", "false", "no", "off"}
+        return bool(value)
+
+    @property
     def network(self) -> str:
         return str(self._settings.get("network", "mainnet")).lower()
 
@@ -238,9 +247,20 @@ class SettingsManager:
         logger.info("Switched trading mode to: %s", clean)
         return True, f"Trading mode successfully set to {clean}."
 
+    def set_trading_enabled(self, enabled: bool) -> Tuple[bool, str]:
+        """Persist the global entry kill switch without changing the selected mode."""
+        if not isinstance(enabled, bool):
+            return False, "Trading activity must be enabled or disabled with a boolean value."
+        self._settings["trading_enabled"] = enabled
+        self._save_to_db()
+        status = "enabled" if enabled else "paused"
+        logger.warning("Global trading activity %s.", status)
+        return True, f"Global trading activity is {status}."
+
     def update_settings(self, updates: Dict[str, Any]) -> Tuple[bool, str]:
         allowed_keys = {
             "trading_mode",
+            "trading_enabled",
             "network",
             "account_index",
             "api_key_index",
@@ -256,6 +276,10 @@ class SettingsManager:
             if k in allowed_keys:
                 if k == "trading_mode":
                     self.set_trading_mode(str(v))
+                elif k == "trading_enabled":
+                    success, message = self.set_trading_enabled(v)
+                    if not success:
+                        return False, message
                 else:
                     self._settings[k] = v
 
@@ -269,6 +293,7 @@ class SettingsManager:
 
         return {
             "trading_mode": self.trading_mode,
+            "trading_enabled": self.trading_enabled,
             "network": self.network,
             "account_index": self.account_index,
             "api_key_index": self.api_key_index,

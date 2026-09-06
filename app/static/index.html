@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=2.4.0" />
+  <link rel="stylesheet" href="/static/styles.css?v=2.5.0" />
 </head>
 <body>
   <div class="app-shell">
@@ -223,34 +223,34 @@
     <!-- 6-Card Performance & Capital Sizing Strip (Full Width Divided) -->
     <div class="perf-strip mono">
       <div class="perf-card">
-        <div class="stat-label">Account Equity</div>
+        <div class="stat-label" id="perf-equity-label">Account Equity</div>
         <div class="stat-val" id="perf-equity" style="color: var(--cyan);">$100.00</div>
         <div class="stat-sub" id="perf-balance-sub">Base: $100 · Free: $100</div>
       </div>
       <div class="perf-card">
-        <div class="stat-label">Margin @ 50x Leverage</div>
+        <div class="stat-label" id="perf-margin-label">Margin @ 50x Leverage</div>
         <div class="stat-val" id="perf-margin-alloc" style="color: var(--lighter-color);">$50.00 (50%)</div>
         <div class="stat-sub" id="perf-leverage-sub">50x Lighter Leverage</div>
       </div>
       <div class="perf-card">
-        <div class="stat-label">Target Notional</div>
+        <div class="stat-label" id="perf-notional-label">Target Notional</div>
         <div class="stat-val" id="perf-notional" style="color: #cbd5e1;">$2,500.00</div>
         <div class="stat-sub" id="perf-size-sub">Dynamic ~0.028 BTC</div>
       </div>
       <div class="perf-card">
-        <div class="stat-label">Net PnL (Lighter)</div>
+        <div class="stat-label" id="perf-net-pnl-label">Net PnL (Lighter)</div>
         <div class="stat-val" id="perf-net-pnl" style="color: var(--green);">$0.00</div>
         <div class="stat-sub" id="perf-rom-sub">RoM: +0.0% · 0% Fees</div>
       </div>
       <div class="perf-card">
-        <div class="stat-label">Win Rate</div>
+        <div class="stat-label" id="perf-winrate-label">Win Rate</div>
         <div class="stat-val" id="perf-winrate" style="color: var(--cyan);">--%</div>
         <div class="stat-sub" id="perf-trades-count">0 Trades</div>
       </div>
       <div class="perf-card">
-        <div class="stat-label">Fees Saved vs Poly</div>
+        <div class="stat-label" id="perf-fees-label">Fees Saved vs Poly</div>
         <div class="stat-val" id="perf-saved-fees" style="color: var(--green);">$0.00</div>
-        <div class="stat-sub">Avoided $64/BTC hurdle</div>
+        <div class="stat-sub" id="perf-saved-fees-sub">Avoided $64/BTC hurdle</div>
       </div>
     </div>
 
@@ -573,6 +573,22 @@
             </div>
           </div>
 
+          <!-- Global Entry Kill Switch -->
+          <div class="settings-section global-trading-control" id="global-trading-control">
+            <div class="settings-section-title">🛑 Global Trading Control</div>
+            <div class="global-trading-row">
+              <div>
+                <div class="global-trading-label" id="trading-activity-label">Trading Activity Enabled</div>
+                <div class="global-trading-description" id="trading-activity-description">New REAL and simulation entries may be submitted.</div>
+              </div>
+              <label class="toggle-switch" title="Pause or resume new trading entries">
+                <input id="setting-trading-enabled" type="checkbox" checked onchange="toggleTradingActivity(this.checked)" aria-label="Enable or pause global trading activity" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div id="trading-activity-alert" class="settings-alert"></div>
+          </div>
+
           <!-- Trading Mode Switcher Box -->
           <div class="settings-section">
             <div class="settings-section-title">Execution Mode Switcher</div>
@@ -776,6 +792,6 @@
   <div id="toast-container" class="toast-container"></div>
 
   <script src="/static/charts.js?v=2.4.0"></script>
-  <script src="/static/app.js?v=2.4.0"></script>
+  <script src="/static/app.js?v=2.5.0"></script>
 </body>
 </html>

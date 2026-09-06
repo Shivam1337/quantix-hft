@@ -243,16 +243,24 @@ function updateDashboard(data) {
   }
 
   // Sidebar Mode Indicator
-  const mode = data.performance?.trading_mode || (data.performance?.is_real_mode ? 'REAL' : 'SIMULATION');
+  const dashboardPerformance = data.trading_performance || data.performance || {};
+  const mode = dashboardPerformance.trading_mode || (dashboardPerformance.is_real_mode ? 'REAL' : 'SIMULATION');
+  const tradingEnabled = (data.trading_enabled ?? dashboardPerformance.trading_enabled) !== false;
   const sideBox = document.getElementById('sidebar-mode-box');
   const sideLabel = document.getElementById('sidebar-mode-label');
   const sideSub = document.getElementById('sidebar-mode-sub');
   if (sideBox && sideLabel) {
-    sideLabel.textContent = mode;
-    if (mode === 'REAL') {
+    sideBox.classList.toggle('mode-paused', !tradingEnabled);
+    if (!tradingEnabled) {
+      sideBox.classList.remove('mode-real');
+      sideLabel.textContent = 'PAUSED';
+      if (sideSub) sideSub.textContent = `${mode} · New entries blocked`;
+    } else if (mode === 'REAL') {
+      sideLabel.textContent = mode;
       sideBox.classList.add('mode-real');
       if (sideSub) sideSub.textContent = 'Active On-Chain zkLighter';
     } else {
+      sideLabel.textContent = mode;
       sideBox.classList.remove('mode-real');
       if (sideSub) sideSub.textContent = 'Paper Trading (0 Risk)';
     }
@@ -306,15 +314,41 @@ function updateDashboard(data) {
   // 5. Performance & Dynamic Capital Metrics
   if (data.trading_performance) {
     const perf = data.trading_performance;
-    setText('perf-equity', `$${fmt(perf.account_equity_usd ?? 100, 2)}`);
-    setText('perf-balance-sub', `Base: $${fmt(perf.account_base_balance_usd ?? 100, 0)} · Free: $${fmt(perf.free_margin_usd ?? 100, 2)}`);
-    setText('perf-margin-alloc', `$${fmt(perf.target_margin_usd ?? 50, 2)} (50%)`);
-    setText('perf-leverage-sub', `${perf.leverage ?? 50}x Lighter Leverage`);
-    setText('perf-notional', `$${fmt(perf.target_notional_usd ?? 2500, 0)}`);
-    const dynamicBtc = (perf.target_notional_usd && data.market?.lighter?.mid_price)
+    const isReal = perf.is_real_mode === true;
+    const accountReady = !isReal || perf.account_data_available === true;
+    const accountMoney = (value, decimals = 2) => accountReady ? `$${fmt(value, decimals)}` : '--';
+    setText('perf-equity-label', isReal ? 'Real Account Equity' : 'Account Equity');
+    setText('perf-margin-label', isReal ? 'Real Margin Target' : `Margin @ ${perf.leverage ?? 50}x Leverage`);
+    setText('perf-notional-label', isReal ? 'Real Target Notional' : 'Target Notional');
+    setText('perf-net-pnl-label', isReal ? 'Net PnL (Confirmed Real)' : 'Net PnL (Lighter)');
+    setText('perf-winrate-label', isReal ? 'Real Win Rate' : 'Win Rate');
+    setText('perf-fees-label', isReal ? 'Fees Saved (Real)' : 'Fees Saved vs Poly');
+    setText('perf-equity', accountMoney(perf.account_equity_usd));
+    setText(
+      'perf-balance-sub',
+      isReal
+        ? (accountReady
+          ? `Lighter collateral: $${fmt(perf.account_collateral_usd, 2)} · Free: $${fmt(perf.free_margin_usd, 2)}`
+          : 'Awaiting verified Lighter account snapshot…')
+        : `Base: $${fmt(perf.account_base_balance_usd, 0)} · Free: $${fmt(perf.free_margin_usd, 2)}`,
+    );
+    setText(
+      'perf-margin-alloc',
+      `${accountMoney(perf.target_margin_usd)} (${isReal && Number(perf.configured_target_margin_usd) > Number(perf.target_margin_usd) + 0.0001
+        ? `$${fmt(perf.configured_target_margin_usd, 2)} configured · free-margin cap`
+        : `${fmt(perf.target_margin_fraction_pct ?? 0, 1)}% target · ${fmt(perf.margin_utilization_pct ?? 0, 1)}% used`})`,
+    );
+    setText(
+      'perf-leverage-sub',
+      isReal
+        ? `${perf.leverage ?? 50}x configured · Exchange margin used: $${fmt(perf.margin_used_usd, 2)}`
+        : `${perf.leverage ?? 50}x Lighter Leverage`,
+    );
+    setText('perf-notional', accountMoney(perf.target_notional_usd, 0));
+    const dynamicBtc = (accountReady && perf.target_notional_usd && data.market?.lighter?.mid_price)
       ? (perf.target_notional_usd / data.market.lighter.mid_price).toFixed(4)
-      : '0.0280';
-    setText('perf-size-sub', `Dynamic ~${dynamicBtc} BTC`);
+      : '--';
+    setText('perf-size-sub', isReal ? `BTC target ~${dynamicBtc} · Position: $${fmt(perf.account_position_notional_usd, 0)}` : `Dynamic ~${dynamicBtc} BTC`);
 
     const netPnlEl = document.getElementById('perf-net-pnl');
     if (netPnlEl) {
@@ -322,11 +356,12 @@ function updateDashboard(data) {
       netPnlEl.style.color = perf.net_pnl > 0 ? 'var(--green)' : (perf.net_pnl < 0 ? 'var(--red)' : 'var(--text)');
     }
     const rom = perf.return_on_margin_pct ?? 0;
-    setText('perf-rom-sub', `RoM: ${rom >= 0 ? '+' : ''}${fmt(rom, 1)}% · 0% Fees`);
+    setText('perf-rom-sub', isReal ? `Confirmed strategy PnL · RoM: ${rom >= 0 ? '+' : ''}${fmt(rom, 1)}%` : `RoM: ${rom >= 0 ? '+' : ''}${fmt(rom, 1)}% · 0% Fees`);
 
     setText('perf-winrate', `${perf.win_rate}%`);
-    setText('perf-trades-count', `${perf.total_trades} Trades (${perf.wins}W / ${perf.losses}L)`);
+    setText('perf-trades-count', `${perf.total_trades} ${isReal ? 'Confirmed Real' : ''} Trades (${perf.wins}W / ${perf.losses}L)`);
     setText('perf-saved-fees', `$${fmt(perf.fees_saved_vs_poly, 2)}`);
+    setText('perf-saved-fees-sub', isReal ? `Est. vs ${fmt(perf.fees_saved_rate_pct, 2)}% round-trip alternative` : 'Avoided $64/BTC hurdle');
   }
 
   // 6. 6-Exchange Cards (5 Signals + 1 Execution Target)
@@ -893,6 +928,7 @@ async function loadSettingsData() {
 function renderSettingsView(data) {
   selectedMode = data.trading_mode || 'SIMULATION';
   selectTradingMode(selectedMode, false);
+  renderTradingActivityControl(data.trading_enabled !== false);
 
   const netEl = document.getElementById('setting-network');
   if (netEl) netEl.value = data.network || 'mainnet';
@@ -934,6 +970,52 @@ function renderSettingsView(data) {
   }
 }
 
+function renderTradingActivityControl(enabled) {
+  const control = document.getElementById('global-trading-control');
+  const input = document.getElementById('setting-trading-enabled');
+  const label = document.getElementById('trading-activity-label');
+  const description = document.getElementById('trading-activity-description');
+  const alert = document.getElementById('trading-activity-alert');
+
+  if (input) input.checked = enabled;
+  if (control) control.classList.toggle('paused', !enabled);
+  if (label) label.textContent = enabled ? 'Trading Activity Enabled' : 'Trading Activity Paused';
+  if (description) {
+    description.textContent = enabled
+      ? 'New REAL and simulation entries may be submitted.'
+      : 'New REAL and simulation entries are blocked. Existing live exposure remains risk-managed.';
+  }
+  if (alert) {
+    alert.className = `settings-alert ${enabled ? 'success' : 'paused'}`;
+    alert.textContent = enabled
+      ? '✅ Global entry control is enabled for the selected execution mode.'
+      : '🛑 Global pause is active. Market data stays online, but no new orders or paper trades can start.';
+  }
+}
+
+async function toggleTradingActivity(enabled) {
+  const input = document.getElementById('setting-trading-enabled');
+  if (input) input.disabled = true;
+
+  try {
+    const res = await fetch('/api/settings/trading-activity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to update global trading activity');
+
+    renderSettingsView(data.settings);
+    showToast(enabled ? 'Global trading activity enabled.' : 'Global trading activity paused. No new entries will be sent.', enabled ? 'success' : 'info');
+  } catch (err) {
+    renderTradingActivityControl(!enabled);
+    showToast(`Unable to update global trading activity: ${err.message}`, 'error');
+  } finally {
+    if (input) input.disabled = false;
+  }
+}
+
 function selectTradingMode(mode, showWarning = true) {
   selectedMode = mode;
   const simCard = document.getElementById('mode-card-sim');
@@ -962,6 +1044,7 @@ async function saveSystemSettings() {
 
   const payload = {
     trading_mode: selectedMode,
+    trading_enabled: document.getElementById('setting-trading-enabled')?.checked !== false,
     network: document.getElementById('setting-network').value,
     account_index: document.getElementById('setting-acc-idx').value ? parseInt(document.getElementById('setting-acc-idx').value) : null,
     api_key_index: parseInt(document.getElementById('setting-key-idx').value) || 4,
@@ -991,7 +1074,7 @@ async function saveSystemSettings() {
     if (!res.ok) throw new Error(data.detail || 'Failed to save settings');
 
     renderSettingsView(data);
-    showToast(`Settings saved! Execution mode: ${data.trading_mode}`, 'success');
+    showToast(`Settings saved! ${data.trading_enabled === false ? 'Global trading is paused' : `Execution mode: ${data.trading_mode}`}`, 'success');
   } catch (err) {
     showToast(`Error saving settings: ${err.message}`, 'error');
   } finally {

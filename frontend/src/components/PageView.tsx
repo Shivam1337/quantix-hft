@@ -65,6 +65,7 @@ export function PageView(p: Props) {
       return (
         <PositionsPage
           positions={p.positions}
+          opportunities={p.opportunities}
           logs={p.logs}
           account={p.account}
           onResetSimulation={p.onResetSimulation}

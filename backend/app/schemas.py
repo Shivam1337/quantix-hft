@@ -63,6 +63,9 @@ class PositionRead(ReadModel):
     long_entry_price: float
     short_entry_price: float
     entry_basis_bps: float
+    current_long_price: float | None = None
+    current_short_price: float | None = None
+    current_basis_bps: float | None = None
     funding_pnl_usd: float
     long_funding_pnl_usd: float = 0.0
     short_funding_pnl_usd: float = 0.0

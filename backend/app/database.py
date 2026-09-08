@@ -42,6 +42,9 @@ def _add_fee_columns(connection) -> None:
             "long_funding_pnl_usd": "FLOAT DEFAULT 0",
             "short_funding_pnl_usd": "FLOAT DEFAULT 0",
             "last_funding_cycle": "TIMESTAMP NULL",
+            "current_long_price": "FLOAT NULL",
+            "current_short_price": "FLOAT NULL",
+            "current_basis_bps": "FLOAT NULL",
         },
         "trade_logs": {
             "phase": "VARCHAR(12) DEFAULT 'open'",

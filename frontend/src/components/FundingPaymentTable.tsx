@@ -1,11 +1,12 @@
-import type { FundingPayment, Position } from "../types";
+import type { FundingPayment, Opportunity, Position } from "../types";
 
 type Props = {
   payments: FundingPayment[];
   activePositions?: Position[];
+  opportunities?: Opportunity[];
 };
 
-export function FundingPaymentTable({ payments, activePositions = [] }: Props) {
+export function FundingPaymentTable({ payments, activePositions = [], opportunities = [] }: Props) {
   const openPositions = activePositions.filter((p) => p.status === "open");
   const totalEntries = payments.length + openPositions.length;
 
@@ -32,6 +33,12 @@ export function FundingPaymentTable({ payments, activePositions = [] }: Props) {
           </thead>
           <tbody>
             {openPositions.map((pos) => {
+              const opp = opportunities.find(
+                (o) =>
+                  o.symbol === pos.symbol &&
+                  o.long_venue.toLowerCase() === pos.long_venue.toLowerCase() &&
+                  o.short_venue.toLowerCase() === pos.short_venue.toLowerCase()
+              );
               const longAmt = pos.long_funding_pnl_usd ?? 0;
               const shortAmt = pos.short_funding_pnl_usd ?? 0;
               const netAmt = pos.funding_pnl_usd ?? (longAmt + shortAmt);
@@ -48,9 +55,16 @@ export function FundingPaymentTable({ payments, activePositions = [] }: Props) {
                   <td className="font-bold text-white">{pos.symbol}</td>
                   <td>
                     <div className="flex flex-col">
-                      <span className="text-xs font-semibold capitalize text-slate-200">
-                        {pos.long_venue}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-semibold capitalize text-slate-200">
+                          {pos.long_venue}
+                        </span>
+                        {opp && (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {(opp.long_funding_rate * 100).toFixed(4)}%
+                          </span>
+                        )}
+                      </div>
                       <span
                         className={`font-mono text-xs font-medium ${
                           longAmt >= 0 ? "text-emerald-400" : "text-rose-400"
@@ -62,9 +76,16 @@ export function FundingPaymentTable({ payments, activePositions = [] }: Props) {
                   </td>
                   <td>
                     <div className="flex flex-col">
-                      <span className="text-xs font-semibold capitalize text-slate-200">
-                        {pos.short_venue}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-semibold capitalize text-slate-200">
+                          {pos.short_venue}
+                        </span>
+                        {opp && (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {(opp.short_funding_rate * 100).toFixed(4)}%
+                          </span>
+                        )}
+                      </div>
                       <span
                         className={`font-mono text-xs font-medium ${
                           shortAmt >= 0 ? "text-emerald-400" : "text-rose-400"

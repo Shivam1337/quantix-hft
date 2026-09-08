@@ -47,6 +47,9 @@ class PositionService:
             long_entry_price=opportunity.long_mark_price,
             short_entry_price=opportunity.short_mark_price,
             entry_basis_bps=opportunity.basis_bps,
+            current_long_price=opportunity.long_mark_price,
+            current_short_price=opportunity.short_mark_price,
+            current_basis_bps=opportunity.basis_bps,
             funding_pnl_usd=0,
             long_funding_pnl_usd=0,
             short_funding_pnl_usd=0,
@@ -175,6 +178,9 @@ class PositionService:
             position.short_entry_price - opportunity.short_mark_price
         ) / position.short_entry_price
         position.basis_pnl_usd = (long_move + short_move) * position.size_usd
+        position.current_long_price = opportunity.long_mark_price
+        position.current_short_price = opportunity.short_mark_price
+        position.current_basis_bps = opportunity.basis_bps
         current_cycle = now.replace(minute=0, second=0, microsecond=0)
         last_cycle = PositionService._aware(position.last_funding_cycle) if position.last_funding_cycle else None
         if session is not None and last_cycle is not None and current_cycle > last_cycle:

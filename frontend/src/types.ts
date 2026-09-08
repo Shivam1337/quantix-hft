@@ -38,6 +38,9 @@ export type Position = {
   long_entry_price: number;
   short_entry_price: number;
   entry_basis_bps: number;
+  current_long_price?: number | null;
+  current_short_price?: number | null;
+  current_basis_bps?: number | null;
   funding_pnl_usd: number;
   long_funding_pnl_usd?: number;
   short_funding_pnl_usd?: number;

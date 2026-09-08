@@ -3,16 +3,17 @@ import { getFundingPayments } from "../api";
 import { FundingPaymentTable } from "../components/FundingPaymentTable";
 import { PositionTable } from "../components/PositionTable";
 import { TradeLogTable } from "../components/TradeLogTable";
-import type { FundingPayment, Position, SimulationAccount, TradeLog } from "../types";
+import type { FundingPayment, Opportunity, Position, SimulationAccount, TradeLog } from "../types";
 
 type Props = {
   positions: Position[];
+  opportunities?: Opportunity[];
   logs: TradeLog[];
   account?: SimulationAccount | null;
   onResetSimulation?: () => void;
 };
 
-export function PositionsPage({ positions, logs, account, onResetSimulation }: Props) {
+export function PositionsPage({ positions, opportunities = [], logs, account, onResetSimulation }: Props) {
   const [payments, setPayments] = useState<FundingPayment[]>([]);
   const currentBal = account?.current_balance ?? 10000;
   const initialBal = account?.initial_balance ?? 10000;
@@ -72,9 +73,9 @@ export function PositionsPage({ positions, logs, account, onResetSimulation }: P
         </div>
       )}
       <div className="col-span-12">
-        <PositionTable positions={positions} onReset={handleReset} />
+        <PositionTable positions={positions} opportunities={opportunities} onReset={handleReset} />
       </div>
-      <FundingPaymentTable payments={payments} activePositions={positions} />
+      <FundingPaymentTable payments={payments} activePositions={positions} opportunities={opportunities} />
       <TradeLogTable logs={logs} />
     </div>
   );

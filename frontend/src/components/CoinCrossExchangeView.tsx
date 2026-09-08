@@ -1,0 +1,192 @@
+import { useMemo } from "react";
+import type { ExchangeSummary, Opportunity } from "../types";
+
+type Props = {
+  symbol: string;
+  exchanges: ExchangeSummary[];
+  opportunities: Opportunity[];
+  onSelectSimulate?: (opp: Opportunity) => void;
+  onExecute?: (opp: Opportunity) => void;
+  onSelectVenue?: (venue: string) => void;
+};
+
+export function CoinCrossExchangeView({
+  symbol,
+  exchanges,
+  opportunities,
+  onSelectSimulate,
+  onExecute,
+  onSelectVenue,
+}: Props) {
+  const normSym = symbol.toUpperCase();
+
+  const venueMarkets = useMemo(() => {
+    return exchanges
+      .map((ex) => {
+        const m = ex.markets.find((item) => item.symbol.toUpperCase() === normSym);
+        return m ? { exchange: ex, market: m } : null;
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [exchanges, normSym]);
+
+  const coinArbs = useMemo(() => {
+    const matched = opportunities.filter((o) => o.symbol.toUpperCase() === normSym);
+    if (matched.length > 0) return matched;
+    const synthesized: Opportunity[] = [];
+    for (let i = 0; i < venueMarkets.length; i++) {
+      for (let j = i + 1; j < venueMarkets.length; j++) {
+        const a = venueMarkets[i].market;
+        const b = venueMarkets[j].market;
+        const diff = a.funding_rate - b.funding_rate;
+        const [longV, shortV, lRate, sRate] =
+          diff <= 0 ? [a.venue, b.venue, a.funding_rate, b.funding_rate] : [b.venue, a.venue, b.funding_rate, a.funding_rate];
+        const netHourly = Math.abs(diff);
+        const lPrice = longV === a.venue ? a.mark_price : b.mark_price;
+        const sPrice = shortV === a.venue ? a.mark_price : b.mark_price;
+        synthesized.push({
+          id: `${normSym}-${longV}-${shortV}`,
+          symbol: normSym,
+          long_venue: longV,
+          short_venue: shortV,
+          long_funding_rate: lRate,
+          short_funding_rate: sRate,
+          gross_hourly_rate: netHourly,
+          net_hourly_rate: netHourly,
+          net_apr_pct: netHourly * 24 * 365 * 100,
+          basis_bps: lPrice > 0 ? ((sPrice - lPrice) / lPrice) * 10000 : 0,
+          capacity_usd: Math.min(a.open_interest, b.open_interest) * 0.05,
+          fee_bps: 12.0,
+          entry_fee_bps: 6.0,
+          exit_fee_bps: 6.0,
+          round_trip_fee_bps: 12.0,
+          fee_breakeven_hours: netHourly > 0 ? (12.0 / 10000) / netHourly : null,
+          long_order_type: "market",
+          short_order_type: "market",
+          long_mark_price: lPrice,
+          short_mark_price: sPrice,
+          min_open_interest: Math.min(a.open_interest, b.open_interest),
+          observed_at: new Date().toISOString(),
+          eligible: true,
+        });
+      }
+    }
+    return synthesized.sort((a, b) => b.net_apr_pct - a.net_apr_pct);
+  }, [opportunities, normSym, venueMarkets]);
+
+  const bestArb = coinArbs[0];
+  const rates = venueMarkets.map((v) => v.market.funding_rate);
+  const prices = venueMarkets.map((v) => v.market.mark_price);
+  const minRate = rates.length ? Math.min(...rates) : 0;
+  const maxRate = rates.length ? Math.max(...rates) : 0;
+  const minPrice = prices.length ? Math.min(...prices) : 0;
+  const maxPrice = prices.length ? Math.max(...prices) : 0;
+  const priceSpreadBps = minPrice > 0 ? ((maxPrice - minPrice) / minPrice) * 10000 : 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Top Cross-Venue Summary Metrics */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+        <div className="panel p-4">
+          <p className="eyebrow text-slate-400">Tracked Exchanges</p>
+          <p className="mt-2 font-mono text-2xl font-bold text-white">{venueMarkets.length} <span className="text-xs font-normal text-slate-400">venues</span></p>
+          <p className="mt-1 text-xs text-slate-500">Live instruments for {normSym}</p>
+        </div>
+        <div className="panel p-4">
+          <p className="eyebrow text-cyan">Max Arbitrage APR</p>
+          <p className="mt-2 font-mono text-2xl font-bold text-emerald-400">{bestArb ? `+${bestArb.net_apr_pct.toFixed(2)}%` : "0.00%"}</p>
+          <p className="mt-1 truncate text-xs text-slate-400">{bestArb ? `${bestArb.long_venue} / ${bestArb.short_venue}` : "No spread"}</p>
+        </div>
+        <div className="panel p-4">
+          <p className="eyebrow text-amber">Max Rate Divergence</p>
+          <p className="mt-2 font-mono text-2xl font-bold text-amber">{((maxRate - minRate) * 100).toFixed(4)}% <span className="text-xs font-normal">/ h</span></p>
+          <p className="mt-1 text-xs text-slate-500">{((maxRate - minRate) * 24 * 365 * 100).toFixed(1)}% annual delta</p>
+        </div>
+        <div className="panel p-4">
+          <p className="eyebrow text-purple-400">Price Basis Spread</p>
+          <p className="mt-2 font-mono text-2xl font-bold text-purple-300">{priceSpreadBps.toFixed(1)} <span className="text-xs font-normal">bps</span></p>
+          <p className="mt-1 text-xs text-slate-500">${(maxPrice - minPrice).toFixed(2)} cross-venue gap</p>
+        </div>
+      </div>
+
+      {/* Cross-Venue Funding Fee Table */}
+      <div className="panel overflow-hidden">
+        <div className="section-heading">
+          <div><p className="eyebrow text-cyan">Exchange Rates Comparison</p><h2>{normSym} Funding Rates & Pricing Across All Venues</h2></div>
+          <span className="count-badge">{venueMarkets.length} active exchanges</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table>
+            <thead>
+              <tr><th>Exchange</th><th>Funding Rate / h</th><th>Annualized APR</th><th>Mark Price</th><th>Bid / Ask</th><th>Open Interest</th><th>Cycle</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+              {venueMarkets.map(({ exchange, market }) => {
+                const apr = market.funding_rate * 24 * 365 * 100;
+                const spreadBps = market.mark_price > 0 ? ((market.ask - market.bid) / market.mark_price) * 10000 : 0;
+                return (
+                  <tr key={exchange.id}>
+                    <td>
+                      <strong className="capitalize">{exchange.name}</strong>
+                      <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5"><span className="status-dot" /> {exchange.status}</div>
+                    </td>
+                    <td>
+                      <span className={`font-mono font-medium ${market.funding_rate >= 0 ? "text-emerald-300" : "text-rose-400"}`}>
+                        {market.funding_rate >= 0 ? "+" : ""}{(market.funding_rate * 100).toFixed(4)}%
+                      </span>
+                    </td>
+                    <td className="font-mono font-bold text-cyan">{apr >= 0 ? "+" : ""}{apr.toFixed(2)}%</td>
+                    <td className="font-mono text-slate-200">${market.mark_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="font-mono text-xs text-slate-400">${market.bid.toFixed(1)} / ${market.ask.toFixed(1)} <span className="ml-1 text-[10px] text-slate-500">({spreadBps.toFixed(1)} bps)</span></td>
+                    <td className="font-mono text-slate-300">${(market.open_interest / 1_000_000).toFixed(2)}M</td>
+                    <td><span className="tag receive">{market.funding_interval_hours}h</span></td>
+                    <td><button onClick={() => onSelectVenue?.(exchange.id)} className="button text-xs">Inspect Venue →</button></td>
+                  </tr>
+                );
+              })}
+              {!venueMarkets.length && <tr><td colSpan={8} className="empty-state">No venues currently track {normSym}.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Pairwise Arbitrage Spreads Table */}
+      <div className="panel overflow-hidden">
+        <div className="section-heading">
+          <div><p className="eyebrow text-emerald-400">Arbitrage Spreads</p><h2>Cross-Exchange Arbitrage Opportunities for {normSym}</h2></div>
+          <span className="count-badge">{coinArbs.length} spread pairs</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table>
+            <thead>
+              <tr><th>Strategy Legs</th><th>Net APR</th><th>Hourly Funding Spread</th><th>Price Basis</th><th>Round-Trip Fee</th><th>Capacity</th><th>Execution</th></tr>
+            </thead>
+            <tbody>
+              {coinArbs.map((arb) => (
+                <tr key={arb.id}>
+                  <td>
+                    <div className="font-medium text-white">{normSym}</div>
+                    <div className="subline"><span className="tag receive">Long {arb.long_venue}</span><span className="tag pay">Short {arb.short_venue}</span></div>
+                  </td>
+                  <td className="font-mono text-lg font-bold text-emerald-400">+{arb.net_apr_pct.toFixed(2)}%</td>
+                  <td className="font-mono text-xs">
+                    <span className="text-emerald-300">{arb.long_funding_rate >= 0 ? "+" : ""}{(arb.long_funding_rate * 100).toFixed(4)}%</span>
+                    <span className="text-slate-500"> → </span>
+                    <span className="text-rose-300">{arb.short_funding_rate >= 0 ? "+" : ""}{(arb.short_funding_rate * 100).toFixed(4)}%</span>
+                    <div className="text-[10px] text-slate-400">Net: +{(arb.net_hourly_rate * 100).toFixed(4)}%/h</div>
+                  </td>
+                  <td className={Math.abs(arb.basis_bps) > 30 ? "text-amber font-mono" : "text-slate-300 font-mono"}>{arb.basis_bps.toFixed(1)} bps</td>
+                  <td className="font-mono text-slate-300">{arb.round_trip_fee_bps.toFixed(1)} bps</td>
+                  <td className="font-mono text-slate-300">${(arb.capacity_usd / 1000).toFixed(0)}k</td>
+                  <td>
+                    <button onClick={() => onSelectSimulate?.(arb)} className="button text-xs">Simulate</button>
+                  </td>
+                </tr>
+              ))}
+              {!coinArbs.length && <tr><td colSpan={7} className="empty-state">No cross-exchange arbitrage spreads found for {normSym}.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

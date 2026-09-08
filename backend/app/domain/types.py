@@ -1,0 +1,54 @@
+from dataclasses import dataclass
+from datetime import datetime
+
+
+@dataclass(frozen=True)
+class MarketSnapshotData:
+    venue: str
+    symbol: str
+    funding_rate: float
+    mark_price: float
+    open_interest: float
+    bid: float
+    ask: float
+    observed_at: datetime
+    funding_rate_native: float | None = None
+    funding_interval_hours: float = 1.0
+    funding_cycle_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OpportunityData:
+    id: str
+    symbol: str
+    long_venue: str
+    short_venue: str
+    long_funding_rate: float
+    short_funding_rate: float
+    gross_hourly_rate: float
+    net_hourly_rate: float
+    net_apr_pct: float
+    basis_bps: float
+    capacity_usd: float
+    fee_bps: float
+    entry_fee_bps: float
+    exit_fee_bps: float
+    round_trip_fee_bps: float
+    fee_breakeven_hours: float | None
+    long_order_type: str
+    short_order_type: str
+    long_mark_price: float
+    short_mark_price: float
+    min_open_interest: float
+    observed_at: datetime
+    historical_3d_apr_pct: float | None = None
+    historical_snapshots_count: int = 0
+    spread_stability_pct: float | None = None
+
+
+@dataclass(frozen=True)
+class RiskDecision:
+    should_unwind: bool
+    basis_breach: bool
+    funding_flip: bool
+    reason: str | None

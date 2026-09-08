@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.entry import entry_rejection_reason
@@ -44,6 +44,41 @@ class SimulationService:
         async with self.session_factory() as session:
             return await self.get_or_create_account(session)
 
+    async def reconcile_risk_closures(self, position_ids: list[str]) -> None:
+        """Move newly risk-closed positions into the paper account."""
+        if not position_ids:
+            return
+        async with self.session_factory() as session:
+            account = await self.get_or_create_account(session)
+            closed = list(
+                (
+                    await session.execute(
+                        select(Position).where(
+                            Position.id.in_(position_ids), Position.status == "closed"
+                        )
+                    )
+                ).scalars()
+            )
+            if not closed:
+                return
+            net_pnl = sum(
+                position.funding_pnl_usd + position.basis_pnl_usd - position.fees_usd
+                for position in closed
+            )
+            account.current_balance += net_pnl
+            account.total_realized_pnl += net_pnl
+            active = list(
+                (
+                    await session.execute(
+                        select(Position).where(Position.status == "open")
+                    )
+                ).scalars()
+            )
+            account.allocated_balance = sum(
+                2 * (position.leg_size_usd or position.size_usd) for position in active
+            )
+            await session.commit()
+
     async def reset_simulation(self) -> SimulationAccount:
         async with self.session_factory() as session:
             await session.execute(delete(TradeLog))
@@ -80,11 +115,11 @@ class SimulationService:
                     continue
 
                 close_trigger = None
-                if opp.net_apr_pct < 0:
-                    close_trigger = (
-                        f"Auto-closed: Inverted carry net APR {opp.net_apr_pct:.2f}% < 0%"
-                    )
-                elif opp.historical_3d_apr_pct is not None and opp.historical_3d_apr_pct < 0:
+                if (
+                    opp.net_apr_pct >= 0
+                    and opp.historical_3d_apr_pct is not None
+                    and opp.historical_3d_apr_pct < 0
+                ):
                     close_trigger = (
                         "Auto-closed: 3-day historical APR degraded to "
                         f"{opp.historical_3d_apr_pct:.2f}%"

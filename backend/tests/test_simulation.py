@@ -1,7 +1,8 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from app.models import FundingSnapshot
+from app.models import FundingSnapshot, Position
 
 
 @pytest.mark.asyncio
@@ -95,6 +96,53 @@ async def test_autonomous_simulation_sizing_and_reasoning(client):
     assert pos.open_reason is not None
     assert "Auto-opened" in pos.open_reason
     assert "$5,000.00/leg" in pos.open_reason or f"${expected_leg_size:,.2f}" in pos.open_reason
+
+
+@pytest.mark.asyncio
+async def test_transient_negative_tick_does_not_churn_position(client):
+    app = client._transport.app
+    opportunities = await app.state.market.list_opportunities(refresh=True)
+    initial = opportunities[0]
+    position = await app.state.positions.open_position(initial, 1_000, paper=True)
+    negative_tick = replace(
+        initial,
+        net_apr_pct=-1,
+        basis_bps=0,
+        historical_3d_apr_pct=-1,
+    )
+
+    await app.state.positions.evaluate_risk([negative_tick])
+    await app.state.simulation.evaluate_and_trade([negative_tick])
+
+    active = await app.state.positions.list_positions(active_only=True)
+    assert len(active) == 1
+    assert active[0].id == position.id
+    assert active[0].negative_hours == 1
+
+    logs = await client.get("/api/v1/logs")
+    assert len(logs.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_risk_closure_reconciles_paper_account(client):
+    app = client._transport.app
+    opportunities = await app.state.market.list_opportunities(refresh=True)
+    position = await app.state.positions.open_position(opportunities[0], 1_000, paper=True)
+
+    async with app.state.session_factory() as session:
+        stored = await session.get(Position, position.id)
+        stored.status = "closed"
+        stored.funding_pnl_usd = 2
+        stored.basis_pnl_usd = 3
+        stored.fees_usd = 1
+        await session.commit()
+
+    await app.state.simulation.reconcile_risk_closures([position.id])
+
+    account = await app.state.simulation.get_account()
+    assert account.current_balance == pytest.approx(10_004)
+    assert account.total_realized_pnl == pytest.approx(4)
+    assert account.allocated_balance == pytest.approx(0)
 
 
 @pytest.mark.asyncio

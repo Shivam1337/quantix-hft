@@ -28,8 +28,9 @@ class Orchestrator:
 
     async def run_once(self) -> int:
         opportunities = await self.market.refresh()
-        await self.positions.evaluate_risk(opportunities)
+        closed_ids = await self.positions.evaluate_risk(opportunities)
         if self.simulation:
+            await self.simulation.reconcile_risk_closures(closed_ids)
             await self.simulation.evaluate_and_trade(opportunities)
         await self._publish(opportunities)
         return len(opportunities)
@@ -109,8 +110,9 @@ class Orchestrator:
                 except (TimeoutError, StopAsyncIteration):
                     pass
                 opportunities = await self.market.ingest(batch)
-                await self.positions.evaluate_risk(opportunities)
+                closed_ids = await self.positions.evaluate_risk(opportunities)
                 if self.simulation:
+                    await self.simulation.reconcile_risk_closures(closed_ids)
                     await self.simulation.evaluate_and_trade(opportunities)
                 await self._publish(opportunities)
         finally:

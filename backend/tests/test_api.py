@@ -93,3 +93,10 @@ async def test_settings_update_changes_risk_configuration(client):
     assert updated.json()["min_apr"] == 10_000
     radar = await client.get("/api/v1/opportunities?refresh=true")
     assert radar.json() == []
+
+
+@pytest.mark.asyncio
+async def test_funding_payments_endpoint(client):
+    res = await client.get("/api/v1/funding-payments")
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)

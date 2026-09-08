@@ -1,5 +1,6 @@
 import type {
   ExchangeSummary,
+  FundingPayment,
   FundingSnapshot,
   Opportunity,
   Position,
@@ -30,6 +31,7 @@ export const getOpportunities = (query = "") =>
 export const getPositions = () => request<Position[]>("/positions?active_only=true");
 export const getSettings = () => request<Settings>("/settings");
 export const getLogs = () => request<TradeLog[]>("/logs?limit=50");
+export const getFundingPayments = (limit = 100) => request<FundingPayment[]>(`/funding-payments?limit=${limit}`);
 export const getSystemMetrics = () => request<SystemMetrics>("/system/metrics");
 export const getExchanges = () => request<ExchangeSummary[]>("/exchanges");
 export const getThroughput = () => request<ThroughputSummary>("/telemetry/websocket-throughput");

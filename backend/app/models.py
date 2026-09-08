@@ -44,6 +44,9 @@ class Position(Base):
     short_entry_price: Mapped[float] = mapped_column(Float)
     entry_basis_bps: Mapped[float] = mapped_column(Float)
     funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    long_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    short_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    last_funding_cycle: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     basis_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     entry_fee_usd: Mapped[float] = mapped_column(Float, default=0)
     exit_fee_usd: Mapped[float] = mapped_column(Float, default=0)
@@ -111,4 +114,21 @@ class SimulationAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class FundingPayment(Base):
+    __tablename__ = "funding_payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position_id: Mapped[str] = mapped_column(String(36), index=True)
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
+    long_venue: Mapped[str] = mapped_column(String(32))
+    short_venue: Mapped[str] = mapped_column(String(32))
+    long_rate: Mapped[float] = mapped_column(Float)
+    short_rate: Mapped[float] = mapped_column(Float)
+    long_payment_usd: Mapped[float] = mapped_column(Float)
+    short_payment_usd: Mapped[float] = mapped_column(Float)
+    net_payment_usd: Mapped[float] = mapped_column(Float)
+    cycle_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

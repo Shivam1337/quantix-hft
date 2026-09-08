@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react";
+import { getFundingPayments } from "../api";
+import { FundingPaymentTable } from "../components/FundingPaymentTable";
 import { PositionTable } from "../components/PositionTable";
 import { TradeLogTable } from "../components/TradeLogTable";
-import type { Position, SimulationAccount, TradeLog } from "../types";
+import type { FundingPayment, Position, SimulationAccount, TradeLog } from "../types";
 
 type Props = {
   positions: Position[];
@@ -10,10 +13,29 @@ type Props = {
 };
 
 export function PositionsPage({ positions, logs, account, onResetSimulation }: Props) {
+  const [payments, setPayments] = useState<FundingPayment[]>([]);
   const currentBal = account?.current_balance ?? 10000;
   const initialBal = account?.initial_balance ?? 10000;
   const allocated = account?.allocated_balance ?? 0;
   const legSize = currentBal / 2;
+
+  const loadPayments = async () => {
+    try {
+      const data = await getFundingPayments();
+      setPayments(data);
+    } catch {}
+  };
+
+  useEffect(() => {
+    void loadPayments();
+    const timer = window.setInterval(() => void loadPayments(), 10000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const handleReset = () => {
+    setPayments([]);
+    onResetSimulation?.();
+  };
 
   return (
     <div className="grid grid-cols-12 gap-5">
@@ -41,7 +63,7 @@ export function PositionsPage({ positions, logs, account, onResetSimulation }: P
           </div>
           {onResetSimulation && (
             <button
-              onClick={onResetSimulation}
+              onClick={handleReset}
               className="button button-danger text-xs font-semibold py-1.5 px-3"
             >
               Reset All Trades & Balance
@@ -50,8 +72,9 @@ export function PositionsPage({ positions, logs, account, onResetSimulation }: P
         </div>
       )}
       <div className="col-span-12">
-        <PositionTable positions={positions} onReset={onResetSimulation} />
+        <PositionTable positions={positions} onReset={handleReset} />
       </div>
+      <FundingPaymentTable payments={payments} activePositions={positions} />
       <TradeLogTable logs={logs} />
     </div>
   );

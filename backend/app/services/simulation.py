@@ -5,7 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.types import OpportunityData
-from app.models import Position, SimulationAccount, TradeLog
+from app.models import FundingPayment, Position, SimulationAccount, TradeLog
 from app.services.positions import PositionService
 from app.services.settings import SettingsService
 
@@ -45,6 +45,7 @@ class SimulationService:
     async def reset_simulation(self) -> SimulationAccount:
         async with self.session_factory() as session:
             await session.execute(delete(TradeLog))
+            await session.execute(delete(FundingPayment))
             await session.execute(delete(Position))
             account = await self.get_or_create_account(session)
             account.current_balance = account.initial_balance

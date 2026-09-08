@@ -39,6 +39,8 @@ export type Position = {
   short_entry_price: number;
   entry_basis_bps: number;
   funding_pnl_usd: number;
+  long_funding_pnl_usd?: number;
+  short_funding_pnl_usd?: number;
   basis_pnl_usd: number;
   entry_fee_usd: number;
   exit_fee_usd: number;
@@ -189,6 +191,21 @@ export type TradeLog = {
   fee_bps: number;
   fee_usd: number;
   error: string | null;
+  created_at: string;
+};
+
+export type FundingPayment = {
+  id: number;
+  position_id: string;
+  symbol: string;
+  cycle_at: string;
+  long_venue: string;
+  long_rate: number;
+  long_payment_usd: number;
+  short_venue: string;
+  short_rate: number;
+  short_payment_usd: number;
+  net_payment_usd: number;
   created_at: string;
 };
 

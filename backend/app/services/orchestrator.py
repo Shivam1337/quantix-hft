@@ -133,6 +133,8 @@ class Orchestrator:
             "short_entry_price": getattr(position, "short_entry_price", 0.0),
             "entry_basis_bps": getattr(position, "entry_basis_bps", 0.0),
             "funding_pnl_usd": getattr(position, "funding_pnl_usd", 0.0),
+            "long_funding_pnl_usd": getattr(position, "long_funding_pnl_usd", 0.0),
+            "short_funding_pnl_usd": getattr(position, "short_funding_pnl_usd", 0.0),
             "basis_pnl_usd": getattr(position, "basis_pnl_usd", 0.0),
             "entry_fee_usd": getattr(position, "entry_fee_usd", 0.0),
             "exit_fee_usd": getattr(position, "exit_fee_usd", 0.0),

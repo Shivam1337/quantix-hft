@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.diagnostics import router as diagnostics_router
 from app.api.exchanges import router as exchanges_router
+from app.api.funding import funding_router
 from app.api.routes import router
 from app.api.system import router as system_router
 from app.api.telemetry_router import router as telemetry_router
@@ -131,6 +132,7 @@ def create_app(
     app.state.settings_service = settings_service
     app.state.simulation = simulation
     app.include_router(router)
+    app.include_router(funding_router)
     app.include_router(system_router)
     app.include_router(exchanges_router)
     app.include_router(telemetry_router)

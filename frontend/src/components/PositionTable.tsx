@@ -60,7 +60,34 @@ export function PositionTable({ positions, onReset }: Props) {
                 </div>
               )}
 
-              <div className="mt-3 flex items-center justify-between border-t border-slate-800/50 pt-2">
+              <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] border-t border-slate-800/40 pt-2 text-slate-400">
+                <span>
+                  Funding:{" "}
+                  <span className={fundingPnl >= 0 ? "text-emerald-300 font-mono font-medium" : "text-amber font-mono font-medium"}>
+                    {fundingPnl >= 0 ? `+$${fundingPnl.toFixed(2)}` : `-$${Math.abs(fundingPnl).toFixed(2)}`}
+                  </span>
+                </span>
+                <span className="text-slate-600">·</span>
+                <span>
+                  <span className="capitalize">{position.long_venue}</span>:{" "}
+                  <span className={(position.long_funding_pnl_usd ?? 0) >= 0 ? "text-emerald-400 font-mono" : "text-rose-400 font-mono"}>
+                    {(position.long_funding_pnl_usd ?? 0) >= 0
+                      ? `+$${(position.long_funding_pnl_usd ?? 0).toFixed(2)}`
+                      : `-$${Math.abs(position.long_funding_pnl_usd ?? 0).toFixed(2)}`}
+                  </span>
+                </span>
+                <span className="text-slate-600">·</span>
+                <span>
+                  <span className="capitalize">{position.short_venue}</span>:{" "}
+                  <span className={(position.short_funding_pnl_usd ?? 0) >= 0 ? "text-emerald-400 font-mono" : "text-rose-400 font-mono"}>
+                    {(position.short_funding_pnl_usd ?? 0) >= 0
+                      ? `+$${(position.short_funding_pnl_usd ?? 0).toFixed(2)}`
+                      : `-$${Math.abs(position.short_funding_pnl_usd ?? 0).toFixed(2)}`}
+                  </span>
+                </span>
+              </div>
+
+              <div className="mt-2 flex items-center justify-between border-t border-slate-800/50 pt-2">
                 <span className={netPnl >= 0 ? "text-emerald-300 font-mono font-medium" : "text-rose-300 font-mono font-medium"}>
                   Net PnL ${netPnl.toFixed(2)}{" "}
                   <small className="text-slate-500 font-normal">(fees ${fees.toFixed(2)})</small>

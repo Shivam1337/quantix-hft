@@ -21,6 +21,7 @@ export function TradeLogTable({ logs }: Props) {
               <th>Side</th>
               <th>Phase</th>
               <th>Size USD</th>
+              <th>Filled Price</th>
               <th>Fee USD</th>
               <th>Status</th>
             </tr>
@@ -37,6 +38,9 @@ export function TradeLogTable({ logs }: Props) {
                 </td>
                 <td className="capitalize text-slate-400">{log.phase}</td>
                 <td className="font-mono text-slate-200">${log.size_usd.toLocaleString()}</td>
+                <td className="font-mono text-cyan">
+                  {log.price ? `$${log.price < 1 ? log.price.toFixed(4) : log.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : "-"}
+                </td>
                 <td className="font-mono text-slate-400">${log.fee_usd.toFixed(2)}</td>
                 <td>
                   <span className={`tag ${log.status === "filled" ? "receive" : "pay"}`}>
@@ -47,7 +51,7 @@ export function TradeLogTable({ logs }: Props) {
             ))}
             {!logs.length && (
               <tr>
-                <td colSpan={7} className="empty-state">
+                <td colSpan={8} className="empty-state">
                   No trade execution logs recorded yet.
                 </td>
               </tr>

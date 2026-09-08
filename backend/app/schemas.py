@@ -64,6 +64,8 @@ class PositionRead(ReadModel):
     short_entry_price: float
     entry_basis_bps: float
     funding_pnl_usd: float
+    long_funding_pnl_usd: float = 0.0
+    short_funding_pnl_usd: float = 0.0
     basis_pnl_usd: float
     entry_fee_usd: float
     exit_fee_usd: float
@@ -91,6 +93,21 @@ class TradeLogRead(ReadModel):
     fee_bps: float
     fee_usd: float
     error: str | None
+    created_at: datetime
+
+
+class FundingPaymentRead(ReadModel):
+    id: int
+    position_id: str
+    symbol: str
+    cycle_at: datetime
+    long_venue: str
+    long_rate: float
+    long_payment_usd: float
+    short_venue: str
+    short_rate: float
+    short_payment_usd: float
+    net_payment_usd: float
     created_at: datetime
 
 

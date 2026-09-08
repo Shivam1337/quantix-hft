@@ -44,6 +44,12 @@ export type Position = {
   funding_pnl_usd: number;
   long_funding_pnl_usd?: number;
   short_funding_pnl_usd?: number;
+  settled_funding_pnl_usd?: number;
+  settled_long_funding_pnl_usd?: number;
+  settled_short_funding_pnl_usd?: number;
+  accrued_funding_pnl_usd?: number;
+  accrued_long_funding_pnl_usd?: number;
+  accrued_short_funding_pnl_usd?: number;
   basis_pnl_usd: number;
   entry_fee_usd: number;
   exit_fee_usd: number;
@@ -55,6 +61,15 @@ export type Position = {
   open_reason?: string | null;
   closed_at: string | null;
   close_reason: string | null;
+  entry_net_apr_pct?: number | null;
+  entry_historical_apr_pct?: number | null;
+  entry_long_funding_rate?: number | null;
+  entry_short_funding_rate?: number | null;
+  entry_rate_observed_at?: string | null;
+  last_net_apr_pct?: number | null;
+  last_long_funding_rate?: number | null;
+  last_short_funding_rate?: number | null;
+  last_rate_observed_at?: string | null;
 };
 
 export type SimulationAccount = {
@@ -72,6 +87,9 @@ export type Settings = {
   min_open_interest: number;
   basis_threshold_bps: number;
   auto_unwind: boolean;
+  entry_min_history_snapshots: number;
+  entry_min_spread_stability_pct: number;
+  entry_max_apr_ratio: number;
   alert_webhook_url: string | null;
 };
 
@@ -209,6 +227,7 @@ export type FundingPayment = {
   short_rate: number;
   short_payment_usd: number;
   net_payment_usd: number;
+  settlement_type: string;
+  rate_source: string;
   created_at: string;
 };
-

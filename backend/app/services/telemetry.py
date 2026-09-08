@@ -1,6 +1,6 @@
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
-import time
 from typing import Any
 
 VENUES = ["hyperliquid", "aevo", "lighter"]
@@ -12,7 +12,9 @@ class TelemetryService:
         self._totals: dict[str, int] = {v: 0 for v in VENUES}
         self._minute_counts: dict[int, dict[str, int]] = defaultdict(lambda: {v: 0 for v in VENUES})
         self._rest_totals: dict[str, int] = {v: 0 for v in VENUES}
-        self._rest_minute_counts: dict[int, dict[str, int]] = defaultdict(lambda: {v: 0 for v in VENUES})
+        self._rest_minute_counts: dict[int, dict[str, int]] = defaultdict(
+            lambda: {v: 0 for v in VENUES}
+        )
         self._rest_endpoints: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
 
     def record_message(self, venue: str, count: int = 1) -> None:
@@ -81,9 +83,14 @@ class TelemetryService:
             })
 
             r_counts = {v: self._rest_minute_counts[m_ts].get(v, 0) for v in all_venues}
-            rest_history.append({
-                "timestamp": iso_ts, "minute": m_ts, "counts": r_counts, "total": sum(r_counts.values())
-            })
+            rest_history.append(
+                {
+                    "timestamp": iso_ts,
+                    "minute": m_ts,
+                    "counts": r_counts,
+                    "total": sum(r_counts.values()),
+                }
+            )
 
         # In-progress minute (now_min)
         prev_min_ts = now_min - 60
@@ -102,15 +109,27 @@ class TelemetryService:
                 rest_current_rates[v] = p_rest if p_rest > 0 else raw_rest
 
         iso_now = datetime.fromtimestamp(now_min, tz=timezone.utc).isoformat()
-        history.append({
-            "timestamp": iso_now, "minute": now_min, "counts": current_rates, "total": sum(current_rates.values())
-        })
+        history.append(
+            {
+                "timestamp": iso_now,
+                "minute": now_min,
+                "counts": current_rates,
+                "total": sum(current_rates.values()),
+            }
+        )
         rest_history.append({
-            "timestamp": iso_now, "minute": now_min, "counts": rest_current_rates, "total": sum(rest_current_rates.values())
+            "timestamp": iso_now,
+            "minute": now_min,
+            "counts": rest_current_rates,
+            "total": sum(rest_current_rates.values()),
         })
 
         endpoints_by_venue = {
-            v: sorted(list(self._rest_endpoints.get(v, {}).values()), key=lambda x: x["calls_total"], reverse=True)
+            v: sorted(
+                list(self._rest_endpoints.get(v, {}).values()),
+                key=lambda x: x["calls_total"],
+                reverse=True,
+            )
             for v in all_venues
         }
 

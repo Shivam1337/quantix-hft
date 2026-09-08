@@ -39,9 +39,10 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                   o.long_venue.toLowerCase() === pos.long_venue.toLowerCase() &&
                   o.short_venue.toLowerCase() === pos.short_venue.toLowerCase()
               );
-              const longAmt = pos.long_funding_pnl_usd ?? 0;
-              const shortAmt = pos.short_funding_pnl_usd ?? 0;
-              const netAmt = pos.funding_pnl_usd ?? (longAmt + shortAmt);
+              const longAmt = pos.accrued_long_funding_pnl_usd ?? 0;
+              const shortAmt = pos.accrued_short_funding_pnl_usd ?? 0;
+              const netAmt = pos.accrued_funding_pnl_usd ?? (longAmt + shortAmt);
+              const settledAmt = pos.settled_funding_pnl_usd ?? 0;
 
               return (
                 <tr key={`active-${pos.id}`} className="bg-cyan-950/20 border-l-2 border-l-cyan">
@@ -50,7 +51,7 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan"></span>
                     </span>
-                    Current Cycle (Live)
+                    Current Cycle Estimate
                   </td>
                   <td className="font-bold text-white">{pos.symbol}</td>
                   <td>
@@ -96,17 +97,22 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                     </div>
                   </td>
                   <td>
-                    <span
-                      className={`font-mono font-bold text-sm ${
-                        netAmt >= 0 ? "text-emerald-400" : "text-amber"
-                      }`}
-                    >
-                      {netAmt >= 0 ? `+$${netAmt.toFixed(4)}` : `-$${Math.abs(netAmt).toFixed(4)}`}
-                    </span>
+                    <div className="flex flex-col">
+                      <span
+                        className={`font-mono font-bold text-sm ${
+                          netAmt >= 0 ? "text-emerald-400" : "text-amber"
+                        }`}
+                      >
+                        {netAmt >= 0 ? `+$${netAmt.toFixed(4)}` : `-$${Math.abs(netAmt).toFixed(4)}`}
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        Settled total: {settledAmt >= 0 ? `+$${settledAmt.toFixed(4)}` : `-$${Math.abs(settledAmt).toFixed(4)}`}
+                      </span>
+                    </div>
                   </td>
                   <td>
                     <span className="tag receive text-[11px] font-semibold tracking-wide">
-                      ACCRUING
+                      ESTIMATE
                     </span>
                   </td>
                 </tr>
@@ -177,7 +183,11 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                   </td>
                   <td>
                     <span className="tag text-[11px] text-slate-400 bg-slate-800/60 border border-slate-700">
-                      SETTLED
+                      {p.settlement_type !== "simulated"
+                        ? "SETTLED"
+                        : p.rate_source === "market_snapshot"
+                          ? "SIMULATED SETTLED"
+                          : "SIMULATED · FALLBACK RATE"}
                     </span>
                   </td>
                 </tr>

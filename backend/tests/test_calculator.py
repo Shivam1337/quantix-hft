@@ -93,12 +93,11 @@ def test_snapshot_preserves_native_rate_and_cycle_metadata():
 
 
 @pytest.mark.asyncio
-async def test_market_engine_stabilizes_funding_rate_within_same_cycle(tmp_path):
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
+async def test_market_engine_uses_latest_funding_rate_within_same_cycle(tmp_path):
     from app.cache import Cache
     from app.models import Base
     from app.services.market import MarketEngine
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'market_test.db'}")
     async with engine.begin() as conn:
@@ -137,7 +136,7 @@ async def test_market_engine_stabilizes_funding_rate_within_same_cycle(tmp_path)
     await market.ingest([snap1, snap_leg])
     assert market.latest_snapshots[("hyperliquid", "BTC-PERP")].funding_rate == 0.0005
 
-    # Sub-second tick in same cycle with jittered rate: rate is locked to cycle, price updates
+    # A later tick in the same cycle must replace a stale spike while prices update.
     snap2 = MarketSnapshotData(
         venue="hyperliquid",
         symbol="BTC-PERP",
@@ -153,10 +152,10 @@ async def test_market_engine_stabilizes_funding_rate_within_same_cycle(tmp_path)
     )
     await market.ingest([snap2])
     hl_snap = market.latest_snapshots[("hyperliquid", "BTC-PERP")]
-    assert hl_snap.funding_rate == 0.0005
+    assert hl_snap.funding_rate == 0.00099
     assert hl_snap.mark_price == 65100
 
-    # Next funding cycle (17:00): rate updates to the new cycle rate
+    # Next funding cycle (17:00): rate continues to update normally.
     next_cycle = datetime(2026, 9, 8, 17, 0, 0, tzinfo=timezone.utc)
     snap3 = MarketSnapshotData(
         venue="hyperliquid",
@@ -174,4 +173,3 @@ async def test_market_engine_stabilizes_funding_rate_within_same_cycle(tmp_path)
     await market.ingest([snap3])
     assert market.latest_snapshots[("hyperliquid", "BTC-PERP")].funding_rate == 0.00075
     await engine.dispose()
-

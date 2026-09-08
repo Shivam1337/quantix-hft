@@ -11,6 +11,7 @@ async def test_health_and_opportunity_radar(client):
     assert response.status_code == 200
     assert len(response.json()) == 6
     assert response.json()[0]["net_apr_pct"] > 10
+    assert all(item["eligible"] is False for item in response.json())
     history = await client.get("/api/v1/funding-history?symbol=BTC-PERP")
     assert history.status_code == 200
     assert len(history.json()) == 3

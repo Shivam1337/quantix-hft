@@ -19,6 +19,9 @@ class SettingsService:
                     min_open_interest=self.defaults.default_min_open_interest,
                     basis_threshold_bps=self.defaults.basis_threshold_bps,
                     auto_unwind=self.defaults.auto_unwind,
+                    entry_min_history_snapshots=self.defaults.entry_min_history_snapshots,
+                    entry_min_spread_stability_pct=self.defaults.entry_min_spread_stability_pct,
+                    entry_max_apr_ratio=self.defaults.entry_max_apr_ratio,
                     alert_webhook_url=self.defaults.alert_webhook_url,
                 )
                 session.add(setting)

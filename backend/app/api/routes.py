@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import select
 
+from app.api.position_schemas import PositionRead
+from app.domain.entry import entry_rejection_reason
+from app.domain.positioning import opportunity_for_position
 from app.models import FundingSnapshot, TradeLog
 from app.schemas import (
     ClosePositionRequest,
@@ -8,7 +11,6 @@ from app.schemas import (
     HealthRead,
     OpenPositionRequest,
     OpportunityRead,
-    PositionRead,
     RefreshRead,
     SettingsRead,
     SettingsUpdate,
@@ -25,11 +27,7 @@ router = APIRouter(prefix="/api/v1")
 def _opportunity_read(item, settings) -> OpportunityRead:
     return OpportunityRead(
         **{key: value for key, value in item.__dict__.items() if not key.startswith("_")},
-        eligible=(
-            item.net_apr_pct >= settings.min_apr
-            and item.min_open_interest >= settings.min_open_interest
-            and abs(item.basis_bps) <= settings.basis_threshold_bps
-        ),
+        eligible=entry_rejection_reason(item, settings) is None,
     )
 
 
@@ -130,7 +128,8 @@ async def close_position(
         position = await request.app.state.positions.get_position(position_id)
         if position is None:
             raise KeyError("position not found")
-        opportunity = await request.app.state.market.get_opportunity(position.opportunity_id)
+        opportunities = await request.app.state.market.list_opportunities()
+        opportunity = opportunity_for_position(position, opportunities)
         value = await request.app.state.positions.close_position_with_market(
             position_id, opportunity, body.reason
         )
@@ -213,4 +212,3 @@ async def reset_simulation(request: Request) -> SimulationResetResponse:
 async def get_simulation_account(request: Request) -> SimulationAccountRead:
     account = await request.app.state.simulation.get_account()
     return SimulationAccountRead.model_validate(account)
-

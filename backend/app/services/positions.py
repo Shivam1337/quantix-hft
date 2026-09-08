@@ -6,10 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.execution import ExecutionManager, ExecutionResult
+from app.domain.positioning import opportunity_for_position
 from app.domain.risk import RiskEngine
 from app.domain.types import OpportunityData
 from app.models import FundingPayment, Position, TradeLog
 from app.services.alerts import AlertService
+from app.services.funding_ledger import FundingLedger
 
 
 class PositionService:
@@ -19,11 +21,13 @@ class PositionService:
         execution: ExecutionManager,
         risk: RiskEngine,
         alerts: AlertService,
+        ledger: FundingLedger | None = None,
     ):
         self.session_factory = session_factory
         self.execution = execution
         self.risk = risk
         self.alerts = alerts
+        self.ledger = ledger or FundingLedger()
 
     async def open_position(
         self,
@@ -53,7 +57,14 @@ class PositionService:
             funding_pnl_usd=0,
             long_funding_pnl_usd=0,
             short_funding_pnl_usd=0,
+            settled_funding_pnl_usd=0,
+            settled_long_funding_pnl_usd=0,
+            settled_short_funding_pnl_usd=0,
+            accrued_funding_pnl_usd=0,
+            accrued_long_funding_pnl_usd=0,
+            accrued_short_funding_pnl_usd=0,
             last_funding_cycle=now.replace(minute=0, second=0, microsecond=0),
+            accrual_started_at=now,
             basis_pnl_usd=0,
             entry_fee_usd=sum(leg.fee_usd for leg in result.legs),
             exit_fee_usd=0,
@@ -62,6 +73,15 @@ class PositionService:
             negative_hours=0,
             opened_at=now,
             updated_at=now,
+            entry_net_apr_pct=opportunity.net_apr_pct,
+            entry_historical_apr_pct=opportunity.historical_3d_apr_pct,
+            entry_long_funding_rate=opportunity.long_funding_rate,
+            entry_short_funding_rate=opportunity.short_funding_rate,
+            entry_rate_observed_at=opportunity.observed_at,
+            last_net_apr_pct=opportunity.net_apr_pct,
+            last_long_funding_rate=opportunity.long_funding_rate,
+            last_short_funding_rate=opportunity.short_funding_rate,
+            last_rate_observed_at=opportunity.observed_at,
         )
         async with self.session_factory() as session:
             session.add(position)
@@ -96,6 +116,10 @@ class PositionService:
                 raise KeyError("position not found")
             if position.status != "open":
                 raise ValueError("position is already closed")
+            if opportunity is not None:
+                await self.ledger.mark_position(
+                    session, position, opportunity, datetime.now(timezone.utc)
+                )
             result = (
                 self.execution.close_pair(opportunity, position.size_usd)
                 if opportunity
@@ -123,11 +147,15 @@ class PositionService:
 
     async def list_funding_payments(self, limit: int = 100) -> list[FundingPayment]:
         async with self.session_factory() as session:
-            stmt = select(FundingPayment).order_by(FundingPayment.cycle_at.desc(), FundingPayment.id.desc()).limit(limit)
+            stmt = (
+                select(FundingPayment)
+                .order_by(FundingPayment.cycle_at.desc(), FundingPayment.id.desc())
+                .limit(limit)
+            )
             return list((await session.execute(stmt)).scalars())
 
     async def evaluate_risk(self, opportunities: Iterable[OpportunityData]) -> list[str]:
-        by_id = {item.id: item for item in opportunities}
+        values = list(opportunities)
         now = datetime.now(timezone.utc)
         events: list[tuple[str, str, str]] = []
         closed_ids: list[str] = []
@@ -136,10 +164,10 @@ class PositionService:
                 (await session.execute(select(Position).where(Position.status == "open"))).scalars()
             )
             for position in positions:
-                opportunity = by_id.get(position.opportunity_id)
+                opportunity = opportunity_for_position(position, values)
                 if opportunity is None:
                     continue
-                self._accrue(position, opportunity, now, session)
+                await self.ledger.mark_position(session, position, opportunity, now)
                 decision = self.risk.evaluate(
                     opportunity.net_apr_pct, opportunity.basis_bps, position.negative_hours
                 )
@@ -155,64 +183,6 @@ class PositionService:
         for event, message, position_id in events:
             await self.alerts.send(event, message, position_id)
         return closed_ids
-
-    @staticmethod
-    def _accrue(
-        position: Position,
-        opportunity: OpportunityData,
-        now: datetime,
-        session: AsyncSession | None = None,
-    ) -> None:
-        previous = PositionService._aware(position.updated_at)
-        elapsed_hours = max(0, (now - previous).total_seconds() / 3600)
-        leg_size = position.leg_size_usd or position.size_usd
-        long_pay = -opportunity.long_funding_rate * leg_size * elapsed_hours
-        short_pay = opportunity.short_funding_rate * leg_size * elapsed_hours
-        position.long_funding_pnl_usd = (position.long_funding_pnl_usd or 0.0) + long_pay
-        position.short_funding_pnl_usd = (position.short_funding_pnl_usd or 0.0) + short_pay
-        position.funding_pnl_usd = position.long_funding_pnl_usd + position.short_funding_pnl_usd
-        long_move = (
-            opportunity.long_mark_price - position.long_entry_price
-        ) / position.long_entry_price
-        short_move = (
-            position.short_entry_price - opportunity.short_mark_price
-        ) / position.short_entry_price
-        position.basis_pnl_usd = (long_move + short_move) * position.size_usd
-        position.current_long_price = opportunity.long_mark_price
-        position.current_short_price = opportunity.short_mark_price
-        position.current_basis_bps = opportunity.basis_bps
-        current_cycle = now.replace(minute=0, second=0, microsecond=0)
-        last_cycle = PositionService._aware(position.last_funding_cycle) if position.last_funding_cycle else None
-        if session is not None and last_cycle is not None and current_cycle > last_cycle:
-            cycle_hrs = max(1.0, (current_cycle - last_cycle).total_seconds() / 3600)
-            c_l = -opportunity.long_funding_rate * leg_size * cycle_hrs
-            c_s = opportunity.short_funding_rate * leg_size * cycle_hrs
-            session.add(
-                FundingPayment(
-                    position_id=position.id,
-                    symbol=position.symbol,
-                    long_venue=position.long_venue,
-                    short_venue=position.short_venue,
-                    long_rate=opportunity.long_funding_rate,
-                    short_rate=opportunity.short_funding_rate,
-                    long_payment_usd=c_l,
-                    short_payment_usd=c_s,
-                    net_payment_usd=c_l + c_s,
-                    cycle_at=current_cycle,
-                )
-            )
-            position.last_funding_cycle = current_cycle
-        elif position.last_funding_cycle is None:
-            position.last_funding_cycle = current_cycle
-        hour_key = now.strftime("%Y-%m-%dT%H")
-        if opportunity.net_apr_pct < 0:
-            if position.last_negative_hour != hour_key:
-                position.negative_hours += 1
-                position.last_negative_hour = hour_key
-        else:
-            position.negative_hours = 0
-            position.last_negative_hour = None
-        position.updated_at = now
 
     @staticmethod
     def _mark_closed(position: Position, reason: str) -> None:
@@ -239,7 +209,3 @@ class PositionService:
                     fee_usd=leg.fee_usd,
                 )
             )
-
-    @staticmethod
-    def _aware(value: datetime) -> datetime:
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)

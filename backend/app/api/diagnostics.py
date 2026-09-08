@@ -109,7 +109,9 @@ async def diagnose_redis(request: Request) -> RedisDiagnosticsRead:
             keys = await redis_client.keys("*")
             info_raw = await redis_client.info("memory")
             latency_ms = (time.perf_counter() - start) * 1000
-            decoded_keys = [k.decode("utf-8") if isinstance(k, bytes) else str(k) for k in keys[:50]]
+            decoded_keys = [
+                k.decode("utf-8") if isinstance(k, bytes) else str(k) for k in keys[:50]
+            ]
             return RedisDiagnosticsRead(
                 status="ok",
                 latency_ms=round(latency_ms, 2),
@@ -150,7 +152,10 @@ async def query_redis(request: Request, body: RedisCommandRequest) -> RedisComma
     if cmd not in ALLOWED_REDIS_COMMANDS:
         raise HTTPException(
             status_code=400,
-            detail=f"Command '{body.command}' is not permitted. Only read-only inspection commands are allowed.",
+            detail=(
+                f"Command '{body.command}' is not permitted. "
+                "Only read-only inspection commands are allowed."
+            ),
         )
     cache = getattr(request.app.state, "cache", None)
     redis_client = getattr(cache, "_redis", None) if cache else None

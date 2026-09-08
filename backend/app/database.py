@@ -45,11 +45,36 @@ def _add_fee_columns(connection) -> None:
             "current_long_price": "FLOAT NULL",
             "current_short_price": "FLOAT NULL",
             "current_basis_bps": "FLOAT NULL",
+            "settled_funding_pnl_usd": "FLOAT DEFAULT 0",
+            "settled_long_funding_pnl_usd": "FLOAT DEFAULT 0",
+            "settled_short_funding_pnl_usd": "FLOAT DEFAULT 0",
+            "accrued_funding_pnl_usd": "FLOAT DEFAULT 0",
+            "accrued_long_funding_pnl_usd": "FLOAT DEFAULT 0",
+            "accrued_short_funding_pnl_usd": "FLOAT DEFAULT 0",
+            "accrual_started_at": "TIMESTAMP NULL",
+            "entry_net_apr_pct": "FLOAT NULL",
+            "entry_historical_apr_pct": "FLOAT NULL",
+            "entry_long_funding_rate": "FLOAT NULL",
+            "entry_short_funding_rate": "FLOAT NULL",
+            "entry_rate_observed_at": "TIMESTAMP NULL",
+            "last_net_apr_pct": "FLOAT NULL",
+            "last_long_funding_rate": "FLOAT NULL",
+            "last_short_funding_rate": "FLOAT NULL",
+            "last_rate_observed_at": "TIMESTAMP NULL",
         },
         "trade_logs": {
             "phase": "VARCHAR(12) DEFAULT 'open'",
             "fee_bps": "FLOAT DEFAULT 0",
             "fee_usd": "FLOAT DEFAULT 0",
+        },
+        "system_settings": {
+            "entry_min_history_snapshots": "INTEGER DEFAULT 6",
+            "entry_min_spread_stability_pct": "FLOAT DEFAULT 60",
+            "entry_max_apr_ratio": "FLOAT DEFAULT 2",
+        },
+        "funding_payments": {
+            "settlement_type": "VARCHAR(24) DEFAULT 'simulated'",
+            "rate_source": "VARCHAR(32) DEFAULT 'market_snapshot'",
         },
     }
     inspector = inspect(connection)
@@ -58,6 +83,37 @@ def _add_fee_columns(connection) -> None:
         for name, definition in columns.items():
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+
+    connection.execute(
+        text(
+            "UPDATE positions SET settled_long_funding_pnl_usd = COALESCE("
+            "(SELECT SUM(long_payment_usd) FROM funding_payments "
+            "WHERE funding_payments.position_id = positions.id), 0)"
+        )
+    )
+    connection.execute(
+        text(
+            "UPDATE positions SET settled_short_funding_pnl_usd = COALESCE("
+            "(SELECT SUM(short_payment_usd) FROM funding_payments "
+            "WHERE funding_payments.position_id = positions.id), 0)"
+        )
+    )
+    connection.execute(
+        text(
+            "UPDATE positions SET settled_funding_pnl_usd = "
+            "COALESCE(settled_long_funding_pnl_usd, 0) + "
+            "COALESCE(settled_short_funding_pnl_usd, 0)"
+        )
+    )
+    connection.execute(
+        text(
+            "UPDATE positions SET accrued_long_funding_pnl_usd = "
+            "COALESCE(long_funding_pnl_usd, 0) - COALESCE(settled_long_funding_pnl_usd, 0), "
+            "accrued_short_funding_pnl_usd = COALESCE(short_funding_pnl_usd, 0) - "
+            "COALESCE(settled_short_funding_pnl_usd, 0), accrued_funding_pnl_usd = "
+            "COALESCE(funding_pnl_usd, 0) - COALESCE(settled_funding_pnl_usd, 0)"
+        )
+    )
 
 
 async def session_scope(

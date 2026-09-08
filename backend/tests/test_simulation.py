@@ -1,7 +1,7 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
-from app.models import FundingSnapshot, Position, TradeLog
-from sqlalchemy import select
+from app.models import FundingSnapshot
 
 
 @pytest.mark.asyncio
@@ -51,6 +51,34 @@ async def test_autonomous_simulation_sizing_and_reasoning(client):
     app = client._transport.app
     opportunities = await app.state.market.list_opportunities()
     assert len(opportunities) > 0
+
+    # Autonomous entry waits for three samples per leg instead of trusting one spike.
+    best = opportunities[0]
+    now = datetime.now(timezone.utc)
+    async with app.state.session_factory() as session:
+        for hours_ago in (1, 2, 3):
+            observed_at = now - timedelta(hours=hours_ago)
+            for venue, rate in (
+                (best.long_venue, best.long_funding_rate),
+                (best.short_venue, best.short_funding_rate),
+            ):
+                session.add(
+                    FundingSnapshot(
+                        venue=venue,
+                        symbol=best.symbol,
+                        funding_rate=rate,
+                        mark_price=best.long_mark_price,
+                        open_interest=20_000_000,
+                        bid=best.long_mark_price,
+                        ask=best.long_mark_price,
+                        observed_at=observed_at,
+                        funding_cycle_at=observed_at.replace(
+                            minute=0, second=0, microsecond=0
+                        ),
+                    )
+                )
+        await session.commit()
+    opportunities = await app.state.market.refresh()
 
     # Trigger autonomous trade
     await app.state.simulation.evaluate_and_trade(opportunities)

@@ -42,6 +42,8 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
           const liveBasisPnl = (longMove + shortMove) * legSize;
 
           const fundingPnl = position.funding_pnl_usd ?? 0;
+          const settledFunding = position.settled_funding_pnl_usd ?? 0;
+          const accruedFunding = position.accrued_funding_pnl_usd ?? 0;
           const fees = position.fees_usd ?? 0;
           const netPnl = fundingPnl + liveBasisPnl - fees;
 
@@ -119,11 +121,15 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
 
               <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] border-t border-slate-800/40 pt-2 text-slate-400">
                 <span>
-                  Funding:{" "}
+                  Funding total:{" "}
                   <span className={fundingPnl >= 0 ? "text-emerald-300 font-mono font-medium" : "text-amber font-mono font-medium"}>
                     {fundingPnl >= 0 ? `+$${fundingPnl.toFixed(2)}` : `-$${Math.abs(fundingPnl).toFixed(2)}`}
                   </span>
                 </span>
+                <span className="text-slate-600">·</span>
+                <span>Settled: <span className="text-slate-300 font-mono">${settledFunding.toFixed(2)}</span></span>
+                <span className="text-slate-600">·</span>
+                <span>Estimate: <span className="text-cyan-300 font-mono">${accruedFunding.toFixed(2)}</span></span>
                 <span className="text-slate-600">·</span>
                 <span>
                   <span className="capitalize">{position.long_venue}</span>:{" "}
@@ -174,4 +180,3 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
     </section>
   );
 }
-

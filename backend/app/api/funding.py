@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, Request
 
-from app.schemas import FundingPaymentRead
+from app.api.position_schemas import FundingPaymentRead
 
 funding_router = APIRouter(prefix="/api/v1", tags=["funding"])
 

@@ -1,9 +1,11 @@
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.entry import entry_rejection_reason
+from app.domain.positioning import opportunity_for_position
 from app.domain.types import OpportunityData
 from app.models import FundingPayment, Position, SimulationAccount, TradeLog
 from app.services.positions import PositionService
@@ -54,7 +56,10 @@ class SimulationService:
             account.updated_at = datetime.now(timezone.utc)
             await session.commit()
             await session.refresh(account)
-            logger.info("simulation reset completed: balance restored to $%.2f", account.initial_balance)
+            logger.info(
+                "simulation reset completed: balance restored to $%.2f",
+                account.initial_balance,
+            )
             return account
 
     async def evaluate_and_trade(self, opportunities: list[OpportunityData]) -> None:
@@ -62,7 +67,7 @@ class SimulationService:
             return
 
         settings = await self.settings_service.get()
-        by_id = {item.id: item for item in opportunities}
+        values = list(opportunities)
         open_positions = await self.positions_service.list_positions(active_only=True)
 
         async with self.session_factory() as session:
@@ -70,7 +75,7 @@ class SimulationService:
 
             # 1. Autonomous exit evaluation
             for pos in list(open_positions):
-                opp = by_id.get(pos.opportunity_id)
+                opp = opportunity_for_position(pos, values)
                 if not opp:
                     continue
 
@@ -81,15 +86,19 @@ class SimulationService:
                     )
                 elif opp.historical_3d_apr_pct is not None and opp.historical_3d_apr_pct < 0:
                     close_trigger = (
-                        f"Auto-closed: 3-day historical APR degraded to {opp.historical_3d_apr_pct:.2f}%"
+                        "Auto-closed: 3-day historical APR degraded to "
+                        f"{opp.historical_3d_apr_pct:.2f}%"
                     )
                 elif abs(opp.basis_bps) > settings.basis_threshold_bps:
                     close_trigger = (
-                        f"Auto-closed: Basis widened to {opp.basis_bps:.1f} bps (threshold: {settings.basis_threshold_bps:.1f})"
+                        "Auto-closed: Basis widened to "
+                        f"{opp.basis_bps:.1f} bps "
+                        f"(threshold: {settings.basis_threshold_bps:.1f})"
                     )
                 elif pos.negative_hours >= 2:
                     close_trigger = (
-                        f"Auto-closed: Negative funding persisted for {pos.negative_hours} consecutive hours"
+                        "Auto-closed: Negative funding persisted for "
+                        f"{pos.negative_hours} consecutive hours"
                     )
 
                 if close_trigger:
@@ -101,20 +110,21 @@ class SimulationService:
                     account.total_realized_pnl += net_pnl
                     account.allocated_balance = 0.0
                     await session.commit()
-                    logger.info("auto-closed position %s: %s, net pnl: $%.2f", pos.id, close_trigger, net_pnl)
+                    logger.info(
+                        "auto-closed position %s: %s, net pnl: $%.2f",
+                        pos.id,
+                        close_trigger,
+                        net_pnl,
+                    )
                     open_positions = [p for p in open_positions if p.id != pos.id]
 
             # 2. Autonomous entry evaluation (only when no open positions)
             if not open_positions and account.current_balance >= 100:
-                eligible: list[OpportunityData] = []
-                for item in opportunities:
-                    if (
-                        item.net_apr_pct >= settings.min_apr
-                        and item.min_open_interest >= settings.min_open_interest
-                        and abs(item.basis_bps) <= settings.basis_threshold_bps
-                    ):
-                        if item.historical_3d_apr_pct is None or item.historical_3d_apr_pct > 0:
-                            eligible.append(item)
+                eligible = [
+                    item
+                    for item in values
+                    if entry_rejection_reason(item, settings) is None
+                ]
 
                 if eligible:
                     # Pick best opportunity considering historical carry
@@ -126,15 +136,21 @@ class SimulationService:
 
                     if leg_size_usd >= 50:
                         hist_desc = (
-                            f"3d avg APR: {best.historical_3d_apr_pct:.1f}% ({best.historical_snapshots_count} snaps, {best.spread_stability_pct:.0f}% stability)"
+                            f"3d avg APR: {best.historical_3d_apr_pct:.1f}% "
+                            f"({best.historical_snapshots_count} snaps, "
+                            f"{best.spread_stability_pct:.0f}% stability)"
                             if best.historical_3d_apr_pct is not None
                             else "initial spot cycle"
                         )
                         open_reason = (
-                            f"Auto-opened: Top ranked spread {best.symbol} ({best.long_venue}/{best.short_venue}). "
+                            f"Auto-opened: Top ranked spread {best.symbol} "
+                            f"({best.long_venue}/{best.short_venue}). "
                             f"Spot APR: {best.net_apr_pct:.1f}%, Basis: {best.basis_bps:.1f} bps. "
                             f"Historical verification: {hist_desc}. "
-                            f"Sized at ${leg_size_usd:,.2f}/leg (50% of ${account.current_balance:,.2f} account balance)."
+                            "Entry confirmation: current APR within "
+                            f"{settings.entry_max_apr_ratio:.1f}x history. "
+                            f"Sized at ${leg_size_usd:,.2f}/leg (50% of "
+                            f"${account.current_balance:,.2f} account balance)."
                         )
 
                         await self.positions_service.open_position(

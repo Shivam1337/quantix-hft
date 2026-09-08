@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -46,26 +46,16 @@ class MarketEngine:
             cycle_at = self._cycle_at(s)
             prev = self.latest_snapshots.get(key)
             if prev is not None and self._cycle_at(prev) == cycle_at:
-                stable_rate = (
-                    prev.funding_rate
-                    if prev.funding_rate != 0 or s.funding_rate == 0
-                    else s.funding_rate
-                )
-                stable_native = (
-                    prev.funding_rate_native
-                    if prev.funding_rate_native is not None
-                    else s.funding_rate_native
-                )
                 self.latest_snapshots[key] = MarketSnapshotData(
                     venue=s.venue,
                     symbol=s.symbol,
-                    funding_rate=stable_rate,
+                    funding_rate=s.funding_rate,
                     mark_price=s.mark_price,
                     open_interest=s.open_interest,
                     bid=s.bid,
                     ask=s.ask,
                     observed_at=s.observed_at,
-                    funding_rate_native=stable_native,
+                    funding_rate_native=s.funding_rate_native,
                     funding_interval_hours=s.funding_interval_hours,
                     funding_cycle_at=cycle_at,
                 )

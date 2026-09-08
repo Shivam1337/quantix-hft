@@ -48,7 +48,9 @@ class Orchestrator:
                         "current_balance": account.current_balance,
                         "allocated_balance": account.allocated_balance,
                         "total_realized_pnl": account.total_realized_pnl,
-                        "updated_at": account.updated_at.isoformat() if account.updated_at else None,
+                        "updated_at": (
+                            account.updated_at.isoformat() if account.updated_at else None
+                        ),
                     }
                 except Exception:
                     pass
@@ -132,12 +134,30 @@ class Orchestrator:
             "long_entry_price": getattr(position, "long_entry_price", 0.0),
             "short_entry_price": getattr(position, "short_entry_price", 0.0),
             "entry_basis_bps": getattr(position, "entry_basis_bps", 0.0),
-            "current_long_price": getattr(position, "current_long_price", position.long_entry_price),
-            "current_short_price": getattr(position, "current_short_price", position.short_entry_price),
+            "current_long_price": getattr(
+                position, "current_long_price", position.long_entry_price
+            ),
+            "current_short_price": getattr(
+                position, "current_short_price", position.short_entry_price
+            ),
             "current_basis_bps": getattr(position, "current_basis_bps", position.entry_basis_bps),
             "funding_pnl_usd": getattr(position, "funding_pnl_usd", 0.0),
             "long_funding_pnl_usd": getattr(position, "long_funding_pnl_usd", 0.0),
             "short_funding_pnl_usd": getattr(position, "short_funding_pnl_usd", 0.0),
+            "settled_funding_pnl_usd": getattr(position, "settled_funding_pnl_usd", 0.0),
+            "settled_long_funding_pnl_usd": getattr(
+                position, "settled_long_funding_pnl_usd", 0.0
+            ),
+            "settled_short_funding_pnl_usd": getattr(
+                position, "settled_short_funding_pnl_usd", 0.0
+            ),
+            "accrued_funding_pnl_usd": getattr(position, "accrued_funding_pnl_usd", 0.0),
+            "accrued_long_funding_pnl_usd": getattr(
+                position, "accrued_long_funding_pnl_usd", 0.0
+            ),
+            "accrued_short_funding_pnl_usd": getattr(
+                position, "accrued_short_funding_pnl_usd", 0.0
+            ),
             "basis_pnl_usd": getattr(position, "basis_pnl_usd", 0.0),
             "entry_fee_usd": getattr(position, "entry_fee_usd", 0.0),
             "exit_fee_usd": getattr(position, "exit_fee_usd", 0.0),
@@ -149,4 +169,21 @@ class Orchestrator:
             "open_reason": getattr(position, "open_reason", None),
             "closed_at": position.closed_at.isoformat() if position.closed_at else None,
             "close_reason": position.close_reason,
+            "entry_net_apr_pct": getattr(position, "entry_net_apr_pct", None),
+            "entry_historical_apr_pct": getattr(position, "entry_historical_apr_pct", None),
+            "entry_long_funding_rate": getattr(position, "entry_long_funding_rate", None),
+            "entry_short_funding_rate": getattr(position, "entry_short_funding_rate", None),
+            "entry_rate_observed_at": (
+                position.entry_rate_observed_at.isoformat()
+                if getattr(position, "entry_rate_observed_at", None)
+                else None
+            ),
+            "last_net_apr_pct": getattr(position, "last_net_apr_pct", None),
+            "last_long_funding_rate": getattr(position, "last_long_funding_rate", None),
+            "last_short_funding_rate": getattr(position, "last_short_funding_rate", None),
+            "last_rate_observed_at": (
+                position.last_rate_observed_at.isoformat()
+                if getattr(position, "last_rate_observed_at", None)
+                else None
+            ),
         }

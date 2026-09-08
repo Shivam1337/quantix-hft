@@ -11,7 +11,12 @@ class Base(DeclarativeBase):
 class FundingSnapshot(Base):
     __tablename__ = "funding_snapshots"
     __table_args__ = (
-        UniqueConstraint("venue", "symbol", "funding_cycle_at", name="uq_funding_snapshot_venue_symbol_cycle"),
+        UniqueConstraint(
+            "venue",
+            "symbol",
+            "funding_cycle_at",
+            name="uq_funding_snapshot_venue_symbol_cycle",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -49,7 +54,18 @@ class Position(Base):
     funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     long_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     short_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
-    last_funding_cycle: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    settled_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    settled_long_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    settled_short_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    accrued_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    accrued_long_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    accrued_short_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    last_funding_cycle: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    accrual_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     basis_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     entry_fee_usd: Mapped[float] = mapped_column(Float, default=0)
     exit_fee_usd: Mapped[float] = mapped_column(Float, default=0)
@@ -63,6 +79,19 @@ class Position(Base):
     open_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    entry_net_apr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_historical_apr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_long_funding_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_short_funding_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_rate_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_net_apr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_long_funding_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_short_funding_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_rate_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class TradeLog(Base):
@@ -92,6 +121,9 @@ class SystemSetting(Base):
     min_open_interest: Mapped[float] = mapped_column(Float, default=100_000)
     basis_threshold_bps: Mapped[float] = mapped_column(Float, default=75)
     auto_unwind: Mapped[bool] = mapped_column(default=True)
+    entry_min_history_snapshots: Mapped[int] = mapped_column(Integer, default=6)
+    entry_min_spread_stability_pct: Mapped[float] = mapped_column(Float, default=60)
+    entry_max_apr_ratio: Mapped[float] = mapped_column(Float, default=2)
     alert_webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -133,5 +165,6 @@ class FundingPayment(Base):
     short_payment_usd: Mapped[float] = mapped_column(Float)
     net_payment_usd: Mapped[float] = mapped_column(Float)
     cycle_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    settlement_type: Mapped[str] = mapped_column(String(24), default="simulated")
+    rate_source: Mapped[str] = mapped_column(String(32), default="market_snapshot")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-

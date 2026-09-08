@@ -99,9 +99,12 @@ def calculate_opportunities(
     return sorted(
         opportunities,
         key=lambda item: (
-            item.historical_3d_apr_pct if item.historical_3d_apr_pct is not None else item.net_apr_pct,
+            (
+                item.historical_3d_apr_pct
+                if item.historical_3d_apr_pct is not None
+                else item.net_apr_pct
+            ),
             item.net_apr_pct,
         ),
         reverse=True,
     )
-

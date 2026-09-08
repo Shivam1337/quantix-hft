@@ -52,36 +52,6 @@ class FundingSnapshotRead(ReadModel):
     created_at: datetime
 
 
-class PositionRead(ReadModel):
-    id: str
-    opportunity_id: str
-    symbol: str
-    long_venue: str
-    short_venue: str
-    size_usd: float
-    leg_size_usd: float | None = None
-    long_entry_price: float
-    short_entry_price: float
-    entry_basis_bps: float
-    current_long_price: float | None = None
-    current_short_price: float | None = None
-    current_basis_bps: float | None = None
-    funding_pnl_usd: float
-    long_funding_pnl_usd: float = 0.0
-    short_funding_pnl_usd: float = 0.0
-    basis_pnl_usd: float
-    entry_fee_usd: float
-    exit_fee_usd: float
-    fees_usd: float
-    status: str
-    negative_hours: int
-    opened_at: datetime
-    updated_at: datetime
-    open_reason: str | None = None
-    closed_at: datetime | None
-    close_reason: str | None
-
-
 class TradeLogRead(ReadModel):
     id: int
     position_id: str | None
@@ -96,21 +66,6 @@ class TradeLogRead(ReadModel):
     fee_bps: float
     fee_usd: float
     error: str | None
-    created_at: datetime
-
-
-class FundingPaymentRead(ReadModel):
-    id: int
-    position_id: str
-    symbol: str
-    cycle_at: datetime
-    long_venue: str
-    long_rate: float
-    long_payment_usd: float
-    short_venue: str
-    short_rate: float
-    short_payment_usd: float
-    net_payment_usd: float
     created_at: datetime
 
 
@@ -150,6 +105,9 @@ class SettingsRead(ReadModel):
     min_open_interest: float
     basis_threshold_bps: float
     auto_unwind: bool
+    entry_min_history_snapshots: int
+    entry_min_spread_stability_pct: float
+    entry_max_apr_ratio: float
     alert_webhook_url: str | None
 
 
@@ -158,6 +116,9 @@ class SettingsUpdate(BaseModel):
     min_open_interest: float | None = Field(default=None, ge=0)
     basis_threshold_bps: float | None = Field(default=None, gt=0, le=10_000)
     auto_unwind: bool | None = None
+    entry_min_history_snapshots: int | None = Field(default=None, ge=2, le=100)
+    entry_min_spread_stability_pct: float | None = Field(default=None, ge=0, le=100)
+    entry_max_apr_ratio: float | None = Field(default=None, gt=1, le=20)
     alert_webhook_url: str | None = None
 
 
@@ -232,6 +193,4 @@ class SimulationResetResponse(BaseModel):
     status: str
     message: str
     account: SimulationAccountRead
-
-
 

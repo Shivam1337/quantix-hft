@@ -85,7 +85,10 @@ def validate_readonly_sql(query: str) -> str:
     if first_word not in ALLOWED_SQL_PREFIXES:
         raise HTTPException(
             status_code=400,
-            detail=f"Statement starting with '{first_word}' is not permitted. Only read-only queries are allowed.",
+            detail=(
+                f"Statement starting with '{first_word}' is not permitted. "
+                "Only read-only queries are allowed."
+            ),
         )
     if MUTATING_SQL_PATTERN.search(first_stmt):
         raise HTTPException(

@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     default_min_apr: float = 10.0
     default_min_open_interest: float = 100_000.0
     basis_threshold_bps: float = 75.0
+    entry_min_history_snapshots: int = Field(default=6, ge=2, le=100)
+    entry_min_spread_stability_pct: float = Field(default=60.0, ge=0, le=100)
+    entry_max_apr_ratio: float = Field(default=2.0, gt=1, le=20)
     capacity_fraction: float = Field(default=0.05, gt=0, le=1)
     auto_unwind: bool = True
     live_trading_enabled: bool = False

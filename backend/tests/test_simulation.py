@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
-from app.models import FundingPayment, Position
+from app.models import FundingPayment, Position, SimulationAccount
 
 
 @pytest.mark.asyncio
@@ -11,8 +11,8 @@ async def test_simulation_account_and_reset(client):
     account_res = await client.get("/api/v1/simulation/account")
     assert account_res.status_code == 200
     acc = account_res.json()
-    assert acc["initial_balance"] == 50.0
-    assert acc["current_balance"] == 50.0
+    assert acc["initial_balance"] == 1_000.0
+    assert acc["current_balance"] == 1_000.0
     assert acc["allocated_balance"] == 0.0
     assert acc["leverage"] == 3.0
 
@@ -33,7 +33,7 @@ async def test_simulation_account_and_reset(client):
     assert reset_res.status_code == 200
     reset_data = reset_res.json()
     assert reset_data["status"] == "ok"
-    assert reset_data["account"]["current_balance"] == 50.0
+    assert reset_data["account"]["current_balance"] == 1_000.0
     assert reset_data["account"]["allocated_balance"] == 0.0
 
     # Positions and logs should be wiped
@@ -41,6 +41,54 @@ async def test_simulation_account_and_reset(client):
     assert len(positions_after.json()) == 0
     logs_after = await client.get("/api/v1/logs")
     assert len(logs_after.json()) == 0
+
+
+@pytest.mark.asyncio
+async def test_untouched_legacy_account_uses_new_starting_balance(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SimulationAccount(
+                id=1,
+                initial_balance=50.0,
+                current_balance=50.0,
+                allocated_balance=0.0,
+                total_realized_pnl=0.0,
+                leverage=3.0,
+            )
+        )
+        await session.commit()
+
+    account_res = await client.get("/api/v1/simulation/account")
+
+    assert account_res.status_code == 200
+    account = account_res.json()
+    assert account["initial_balance"] == 1_000.0
+    assert account["current_balance"] == 1_000.0
+
+
+@pytest.mark.asyncio
+async def test_reset_uses_new_starting_balance_for_existing_account(client):
+    app = client._transport.app
+    async with app.state.session_factory() as session:
+        session.add(
+            SimulationAccount(
+                id=1,
+                initial_balance=50.0,
+                current_balance=45.0,
+                allocated_balance=0.0,
+                total_realized_pnl=-5.0,
+                leverage=3.0,
+            )
+        )
+        await session.commit()
+
+    reset_res = await client.post("/api/v1/simulation/reset")
+
+    assert reset_res.status_code == 200
+    account = reset_res.json()["account"]
+    assert account["initial_balance"] == 1_000.0
+    assert account["current_balance"] == 1_000.0
 
 
 @pytest.mark.asyncio
@@ -65,18 +113,18 @@ async def test_autonomous_simulation_sizing_and_reasoning(client):
     assert len(open_positions) == 1
     pos = open_positions[0]
     
-    # System uses $25 margin on each leg and 3x leverage for $75 notional.
+    # System uses $500 margin on each leg and 3x leverage for $1,500 notional.
     account = await app.state.simulation.get_account()
     expected_margin = account.initial_balance / 2.0
     expected_leg_size = expected_margin * account.leverage
     assert pos.margin_per_leg_usd == pytest.approx(expected_margin)
     assert pos.leg_size_usd == pytest.approx(expected_leg_size)
     assert pos.leverage == pytest.approx(3.0)
-    assert account.allocated_balance == pytest.approx(50.0)
+    assert account.allocated_balance == pytest.approx(1_000.0)
     assert pos.open_reason is not None
     assert "Auto-opened" in pos.open_reason
-    assert "$25.00 margin/leg" in pos.open_reason
-    assert "$75.00 notional/leg" in pos.open_reason
+    assert "$500.00 margin/leg" in pos.open_reason
+    assert "$1,500.00 notional/leg" in pos.open_reason
 
 
 @pytest.mark.asyncio
@@ -159,7 +207,7 @@ async def test_risk_closure_reconciles_paper_account(client):
     await app.state.simulation.reconcile_risk_closures([position.id])
 
     account = await app.state.simulation.get_account()
-    assert account.current_balance == pytest.approx(54)
+    assert account.current_balance == pytest.approx(1_004)
     assert account.total_realized_pnl == pytest.approx(4)
     assert account.allocated_balance == pytest.approx(0)
 

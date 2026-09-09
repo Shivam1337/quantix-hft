@@ -44,7 +44,7 @@ The core API includes:
 - `GET /api/v1/funding-history` for exchange-confirmed settlement cycles persisted in PostgreSQL.
 - `GET /api/v1/funding-pending` for cycles awaiting official confirmation; pending cycles contribute no P&L.
 - `POST /api/v1/positions/open` and `POST /api/v1/positions/{id}/close` for paper paired execution.
-- `POST /api/v1/simulator` for projected hourly cashflow, fees, and return. Simulator capital is total margin across both legs; the default is $50 ($25 per leg) at 3x leverage, producing $75 notional per leg.
+- `POST /api/v1/simulator` for projected hourly cashflow, fees, and return. Simulator capital is total margin across both legs; the dashboard default is $1,000 ($500 per leg) at 3x leverage, producing $1,500 notional per leg.
 - `GET/PATCH /api/v1/settings` for APR, open-interest, basis, webhook, and auto-unwind controls.
 - `GET/POST/DELETE /api/v1/wallet` for a process-memory-only wallet import, read-only balance refresh, and removal.
 - `GET /api/v1/positions`, `GET /api/v1/logs`, and `GET /api/v1/health`.

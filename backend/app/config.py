@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     capacity_fraction: float = Field(default=0.05, gt=0, le=1)
     auto_unwind: bool = True
     live_trading_enabled: bool = False
-    simulation_initial_balance_usd: float = Field(default=50.0, gt=0)
+    simulation_initial_balance_usd: float = Field(default=1_000.0, gt=0)
     simulation_leverage: float = Field(default=3.0, ge=1, le=100)
     alert_webhook_url: str | None = None
 

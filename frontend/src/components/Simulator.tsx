@@ -21,8 +21,8 @@ export function Simulator({
   onRun,
   onReset,
 }: Props) {
-  const initialBal = account?.initial_balance ?? 50;
-  const currentBal = account?.current_balance ?? 50;
+  const initialBal = account?.initial_balance ?? 1000;
+  const currentBal = account?.current_balance ?? 1000;
   const allocatedBal = account?.allocated_balance ?? 0;
   const realizedPnl = account?.total_realized_pnl ?? 0;
   const leverage = account?.leverage ?? 3;

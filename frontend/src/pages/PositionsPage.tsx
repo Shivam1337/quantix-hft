@@ -15,7 +15,7 @@ type Props = {
 
 export function PositionsPage({ positions, opportunities = [], logs, account, onResetSimulation }: Props) {
   const [payments, setPayments] = useState<FundingPayment[]>([]);
-  const currentBal = account?.current_balance ?? 50;
+  const currentBal = account?.current_balance ?? 1000;
   const allocated = account?.allocated_balance ?? 0;
   const leverage = account?.leverage ?? 3;
   const legMargin = currentBal / 2;

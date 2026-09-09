@@ -20,7 +20,7 @@ class SimulationService:
         session_factory: async_sessionmaker[AsyncSession],
         positions_service: PositionService,
         settings_service: SettingsService,
-        initial_balance_usd: float = 50.0,
+        initial_balance_usd: float = 1_000.0,
         leverage: float = 3.0,
     ):
         self.session_factory = session_factory
@@ -44,12 +44,12 @@ class SimulationService:
             await session.commit()
             await session.refresh(account)
         elif (
-            account.initial_balance == 10_000.0
-            and account.current_balance == 10_000.0
+            account.initial_balance in (50.0, 10_000.0)
+            and account.current_balance == account.initial_balance
             and account.allocated_balance == 0.0
             and account.total_realized_pnl == 0.0
         ):
-            # Migrate an untouched account created with the previous $10,000 default.
+            # Migrate untouched accounts created with previous default balances.
             account.initial_balance = self.initial_balance_usd
             account.current_balance = self.initial_balance_usd
             account.leverage = self.leverage
@@ -109,7 +109,8 @@ class SimulationService:
             await session.execute(delete(FundingPayment))
             await session.execute(delete(Position))
             account = await self.get_or_create_account(session)
-            account.current_balance = account.initial_balance
+            account.initial_balance = self.initial_balance_usd
+            account.current_balance = self.initial_balance_usd
             account.allocated_balance = 0.0
             account.total_realized_pnl = 0.0
             account.updated_at = datetime.now(timezone.utc)
@@ -180,7 +181,7 @@ class SimulationService:
                     # Pick best opportunity considering historical carry
                     best = eligible[0]
                     # Keep the account balance as margin, then apply leverage to each leg's
-                    # executable notional. The $50 default therefore starts at $25 margin/leg.
+                    # executable notional. The $1,000 default therefore starts at $500 margin/leg.
                     leg_margin_usd = account.current_balance / 2.0
                     leg_size_usd = leg_margin_usd * self.leverage
                     if best.capacity_usd > 0:

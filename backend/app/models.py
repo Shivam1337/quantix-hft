@@ -143,8 +143,8 @@ class SimulationAccount(Base):
     __tablename__ = "simulation_account"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    initial_balance: Mapped[float] = mapped_column(Float, default=50.0)
-    current_balance: Mapped[float] = mapped_column(Float, default=50.0)
+    initial_balance: Mapped[float] = mapped_column(Float, default=1_000.0)
+    current_balance: Mapped[float] = mapped_column(Float, default=1_000.0)
     allocated_balance: Mapped[float] = mapped_column(Float, default=0.0)
     total_realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     leverage: Mapped[float] = mapped_column(Float, default=3.0)

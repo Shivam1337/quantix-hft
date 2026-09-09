@@ -78,10 +78,12 @@ class PositionService:
             entry_long_funding_rate=opportunity.long_funding_rate,
             entry_short_funding_rate=opportunity.short_funding_rate,
             entry_rate_observed_at=opportunity.funding_history_latest_cycle,
-            last_net_apr_pct=opportunity.net_apr_pct,
-            last_long_funding_rate=opportunity.long_funding_rate,
-            last_short_funding_rate=opportunity.short_funding_rate,
-            last_rate_observed_at=opportunity.funding_history_latest_cycle,
+            # These fields are populated only after a confirmed settlement.
+            # The opportunity rates are rolling medians, not current funding.
+            last_net_apr_pct=None,
+            last_long_funding_rate=None,
+            last_short_funding_rate=None,
+            last_rate_observed_at=None,
         )
         async with self.session_factory() as session:
             session.add(position)
@@ -173,7 +175,9 @@ class PositionService:
                     continue
                 await self.ledger.mark_position(session, position, opportunity, now)
                 decision = self.risk.evaluate(
-                    opportunity.net_apr_pct, opportunity.basis_bps, position.negative_hours
+                    position.last_net_apr_pct,
+                    opportunity.basis_bps,
+                    position.negative_hours,
                 )
                 if decision.should_unwind:
                     self._mark_closed(position, decision.reason or "risk guard")

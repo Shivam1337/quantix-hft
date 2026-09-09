@@ -14,9 +14,15 @@ class RiskEngine:
     def __init__(self, config: RiskConfig):
         self.config = config
 
-    def evaluate(self, net_apr_pct: float, basis_bps: float, negative_hours: int) -> RiskDecision:
+    def evaluate(
+        self, net_apr_pct: float | None, basis_bps: float, negative_hours: int
+    ) -> RiskDecision:
         basis_breach = abs(basis_bps) > self.config.basis_threshold_bps
-        funding_flip = negative_hours >= self.config.negative_hours_to_unwind and net_apr_pct < 0
+        funding_flip = (
+            negative_hours >= self.config.negative_hours_to_unwind
+            and net_apr_pct is not None
+            and net_apr_pct < 0
+        )
         reason = None
         if basis_breach:
             reason = (

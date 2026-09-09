@@ -16,6 +16,12 @@ def test_funding_flip_requires_two_negative_hours():
     assert decision.funding_flip
 
 
+def test_unconfirmed_funding_does_not_trigger_flip():
+    decision = RiskEngine(RiskConfig(negative_hours_to_unwind=2)).evaluate(None, 0, 2)
+    assert not decision.should_unwind
+    assert not decision.funding_flip
+
+
 def test_alert_only_mode_does_not_unwind():
     decision = RiskEngine(RiskConfig(auto_unwind=False)).evaluate(100, 100, 0)
     assert decision.basis_breach

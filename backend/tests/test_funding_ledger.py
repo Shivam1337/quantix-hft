@@ -103,6 +103,55 @@ async def test_ledger_uses_only_confirmed_settlements(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_ledger_uses_latest_confirmed_rates_for_risk_streak(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'risk.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    cycle = datetime(2026, 9, 8, 11, tzinfo=timezone.utc)
+    value = opportunity(cycle)
+    position = make_position(value, cycle)
+    position.last_funding_cycle = cycle
+
+    async with sessions() as session:
+        session.add(position)
+        for offset, (long_rate, short_rate) in enumerate(
+            ((0.0001, 0.0002), (0.0002, 0.0001), (0.0003, 0.0001))
+        ):
+            cycle_at = cycle - timedelta(hours=2 - offset)
+            net_payment = (short_rate - long_rate) * position.leg_size_usd
+            session.add(
+                FundingPayment(
+                    position_id=position.id,
+                    symbol=position.symbol,
+                    long_venue=position.long_venue,
+                    short_venue=position.short_venue,
+                    long_rate=long_rate,
+                    short_rate=short_rate,
+                    long_payment_usd=-long_rate * position.leg_size_usd,
+                    short_payment_usd=short_rate * position.leg_size_usd,
+                    net_payment_usd=net_payment,
+                    cycle_at=cycle_at,
+                    settlement_type="confirmed",
+                    rate_source="exchange_history",
+                )
+            )
+        await session.commit()
+
+        await FundingLedger().mark_position(
+            session, position, value, cycle + timedelta(minutes=30)
+        )
+        await session.commit()
+
+    assert position.last_long_funding_rate == pytest.approx(0.0003)
+    assert position.last_short_funding_rate == pytest.approx(0.0001)
+    assert position.last_net_apr_pct == pytest.approx(-0.0002 * 24 * 365 * 100)
+    assert position.last_rate_observed_at.hour == cycle.hour
+    assert position.negative_hours == 2
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_missing_confirmation_is_pending_and_never_falls_back(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'pending.db'}")
     async with engine.begin() as connection:

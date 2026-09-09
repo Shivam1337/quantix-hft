@@ -115,16 +115,7 @@ class SimulationService:
                     continue
 
                 close_trigger = None
-                if (
-                    opp.net_apr_pct >= 0
-                    and opp.historical_3d_apr_pct is not None
-                    and opp.historical_3d_apr_pct < 0
-                ):
-                    close_trigger = (
-                        "Auto-closed: 3-day historical APR degraded to "
-                        f"{opp.historical_3d_apr_pct:.2f}%"
-                    )
-                elif abs(opp.basis_bps) > settings.basis_threshold_bps:
+                if abs(opp.basis_bps) > settings.basis_threshold_bps:
                     close_trigger = (
                         "Auto-closed: Basis widened to "
                         f"{opp.basis_bps:.1f} bps "

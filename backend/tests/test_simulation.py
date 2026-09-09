@@ -1,7 +1,8 @@
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
-from app.models import Position
+from app.models import FundingPayment, Position
 
 
 @pytest.mark.asyncio
@@ -73,7 +74,7 @@ async def test_autonomous_simulation_sizing_and_reasoning(client):
 
 
 @pytest.mark.asyncio
-async def test_transient_negative_tick_does_not_churn_position(client):
+async def test_unconfirmed_negative_tick_does_not_churn_position(client):
     app = client._transport.app
     opportunities = await app.state.market.list_opportunities(refresh=True)
     initial = opportunities[0]
@@ -91,10 +92,48 @@ async def test_transient_negative_tick_does_not_churn_position(client):
     active = await app.state.positions.list_positions(active_only=True)
     assert len(active) == 1
     assert active[0].id == position.id
-    assert active[0].negative_hours == 1
+    assert active[0].negative_hours == 0
 
     logs = await client.get("/api/v1/logs")
     assert len(logs.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_confirmed_negative_funding_closes_after_two_cycles(client):
+    app = client._transport.app
+    opportunities = await app.state.market.list_opportunities(refresh=True)
+    position = await app.state.positions.open_position(opportunities[0], 1_000, paper=True)
+
+    async with app.state.session_factory() as session:
+        stored = await session.get(Position, position.id)
+        cycle = stored.last_funding_cycle
+        for offset, net_payment in ((0, -0.1), (1, -0.1), (2, 0.1)):
+            cycle_at = cycle - timedelta(hours=offset)
+            long_rate = 0.0001
+            short_rate = 0.0 if net_payment < 0 else 0.0002
+            session.add(
+                FundingPayment(
+                    position_id=position.id,
+                    symbol=position.symbol,
+                    long_venue=position.long_venue,
+                    short_venue=position.short_venue,
+                    long_rate=long_rate,
+                    short_rate=short_rate,
+                    long_payment_usd=-long_rate * position.leg_size_usd,
+                    short_payment_usd=short_rate * position.leg_size_usd,
+                    net_payment_usd=net_payment,
+                    cycle_at=cycle_at,
+                    settlement_type="confirmed",
+                    rate_source="exchange_history",
+                )
+            )
+        await session.commit()
+
+    closed_ids = await app.state.positions.evaluate_risk(opportunities)
+    assert position.id in closed_ids
+    stored = await app.state.positions.get_position(position.id)
+    assert stored.status == "closed"
+    assert stored.close_reason == "negative net APR persisted for 2 funding hours"
 
 
 @pytest.mark.asyncio

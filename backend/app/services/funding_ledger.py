@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.types import OpportunityData
 from app.models import FundingPayment, FundingPendingCycle, FundingSettlement, Position
+from app.services.funding_metrics import apply_confirmed_metrics
 
 
 class FundingLedger:
@@ -29,7 +30,7 @@ class FundingLedger:
 
         cycle = last_cycle + timedelta(hours=1)
         while cycle <= current_cycle:
-            confirmed = await self._settle_cycle(session, position, opportunity, cycle)
+            confirmed = await self._settle_cycle(session, position, cycle)
             if not confirmed:
                 break
             position.last_funding_cycle = cycle
@@ -53,18 +54,13 @@ class FundingLedger:
             position.short_entry_price - opportunity.short_mark_price
         ) / position.short_entry_price
         position.basis_pnl_usd = (long_move + short_move) * position.size_usd
-        position.last_net_apr_pct = opportunity.net_apr_pct
-        position.last_long_funding_rate = opportunity.long_funding_rate
-        position.last_short_funding_rate = opportunity.short_funding_rate
-        position.last_rate_observed_at = opportunity.funding_history_latest_cycle
-        self._update_negative_hours(position, opportunity.net_apr_pct, now)
+        await apply_confirmed_metrics(session, position)
         position.updated_at = now
 
     async def _settle_cycle(
         self,
         session: AsyncSession,
         position: Position,
-        opportunity: OpportunityData,
         cycle: datetime,
     ) -> bool:
         existing = await session.scalar(
@@ -175,17 +171,6 @@ class FundingLedger:
         else:
             pending.reason = f"awaiting exchange confirmation: {missing}"
             pending.updated_at = now
-
-    @staticmethod
-    def _update_negative_hours(position: Position, net_apr_pct: float, now: datetime) -> None:
-        hour_key = now.strftime("%Y-%m-%dT%H")
-        if net_apr_pct < 0:
-            if position.last_negative_hour != hour_key:
-                position.negative_hours += 1
-                position.last_negative_hour = hour_key
-        else:
-            position.negative_hours = 0
-            position.last_negative_hour = None
 
     @staticmethod
     def _cycle(value: datetime) -> datetime:

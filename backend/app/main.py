@@ -58,9 +58,10 @@ def create_app(
     )
     alerts = AlertService(sessions, settings.alert_webhook_url)
     fee_schedule = FeeSchedule()
+    active_exchange_service = exchange_service or build_exchange_service(settings)
     market = MarketEngine(
         sessions,
-        exchange_service or build_exchange_service(settings),
+        active_exchange_service,
         cache,
         CalculatorConfig(
             fee_schedule=fee_schedule,
@@ -108,6 +109,9 @@ def create_app(
                 bridge_task.cancel()
                 await asyncio.gather(bridge_task, return_exceptions=True)
             await orchestrator.stop()
+            close_exchange = getattr(active_exchange_service, "close", None)
+            if close_exchange is not None:
+                await close_exchange()
             await cache.close()
             await engine.dispose()
 

@@ -6,15 +6,33 @@ from typing import Any
 from websockets import connect
 
 from app.domain.types import MarketSnapshotData
-from app.exchanges.base import HttpExchangeAdapter, funding_cycle_at
+from app.exchanges.base import (
+    ExchangeError,
+    ExchangeRateLimited,
+    HttpExchangeAdapter,
+    funding_cycle_at,
+)
 
 
 class AevoAdapter(HttpExchangeAdapter):
-    def __init__(self, base_url: str = "https://api.aevo.xyz"):
+    def __init__(
+        self,
+        base_url: str = "https://api.aevo.xyz",
+        refresh_interval_seconds: int = 300,
+        request_interval_seconds: float = 1.0,
+        max_concurrent_requests: int = 2,
+    ):
         super().__init__("aevo", base_url)
         self._open_interest: dict[str, float] = {}
         self._latest: dict[str, MarketSnapshotData] = {}
         self._refresh_after: dict[str, datetime] = {}
+        self._refresh_interval = timedelta(seconds=max(60, refresh_interval_seconds))
+        self._request_interval_seconds = max(0.0, request_interval_seconds)
+        self._request_slots = asyncio.Semaphore(max(1, max_concurrent_requests))
+        self._refresh_locks: dict[str, asyncio.Lock] = {}
+        self._rate_lock = asyncio.Lock()
+        self._next_request_at = 0.0
+        self._failure_count: dict[str, int] = {}
 
     async def fetch_markets(self, symbols: list[str]) -> list[MarketSnapshotData]:
         results = await asyncio.gather(
@@ -24,13 +42,52 @@ class AevoAdapter(HttpExchangeAdapter):
 
     async def _fetch_instrument(self, symbol: str) -> MarketSnapshotData | None:
         instrument_name = symbol if symbol.endswith("-PERP") else f"{symbol}-PERP"
-        instrument, funding = await asyncio.gather(
-            self._request("GET", f"/instrument/{instrument_name}"),
-            self._request(
-                "GET", "/funding", params={"instrument_name": instrument_name}
-            ),
-        )
-        return self._snapshot(instrument, funding)
+        normalized = self.normalize_symbol(instrument_name)
+        lock = self._refresh_locks.setdefault(normalized, asyncio.Lock())
+        async with lock:
+            now = self.observed_at()
+            if now < self._refresh_after.get(
+                normalized, datetime.min.replace(tzinfo=timezone.utc)
+            ):
+                return self._latest.get(normalized)
+            try:
+                async with self._request_slots:
+                    await self._wait_for_request_slot()
+                    instrument = await self._request("GET", f"/instrument/{instrument_name}")
+                    await self._wait_for_request_slot()
+                    funding = await self._request(
+                        "GET", "/funding", params={"instrument_name": instrument_name}
+                    )
+                value = self._snapshot(instrument, funding)
+            except ExchangeRateLimited as exc:
+                self._schedule_retry(normalized, exc.retry_after_seconds)
+                return self._latest.get(normalized)
+            except ExchangeError:
+                self._schedule_retry(normalized, 30.0)
+                return self._latest.get(normalized)
+            if value is None:
+                self._schedule_retry(normalized, 30.0)
+            else:
+                self._failure_count.pop(normalized, None)
+            return value
+
+    async def _wait_for_request_slot(self) -> None:
+        loop = asyncio.get_running_loop()
+        async with self._rate_lock:
+            now = loop.time()
+            delay = max(0.0, self._next_request_at - now)
+            self._next_request_at = max(now, self._next_request_at) + (
+                self._request_interval_seconds
+            )
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def _schedule_retry(self, symbol: str, retry_after_seconds: float) -> None:
+        failures = self._failure_count.get(symbol, 0) + 1
+        self._failure_count[symbol] = failures
+        backoff = min(300.0, 30.0 * (2 ** min(failures - 1, 3)))
+        delay = max(backoff, retry_after_seconds)
+        self._refresh_after[symbol] = self.observed_at() + timedelta(seconds=delay)
 
     def _snapshot(
         self, instrument: dict[str, Any], funding: dict[str, Any]
@@ -73,7 +130,7 @@ class AevoAdapter(HttpExchangeAdapter):
             funding_cycle_at=funding_cycle_at(next_funding_at or observed_at, 1.0),
         )
         self._latest[symbol] = value
-        self._refresh_after[symbol] = observed_at + timedelta(minutes=5)
+        self._refresh_after[symbol] = observed_at + self._refresh_interval
         return value
 
     async def stream_markets(self, symbols: list[str]):
@@ -112,16 +169,18 @@ class AevoAdapter(HttpExchangeAdapter):
         if symbol not in wanted or bid is None or ask is None:
             return None
         cached = self._latest.get(symbol)
-        if cached is None:
-            return None
         now = self.observed_at()
-        if now >= self._refresh_after.get(symbol, datetime.min.replace(tzinfo=timezone.utc)):
+        if cached is None or now >= self._refresh_after.get(
+            symbol, datetime.min.replace(tzinfo=timezone.utc)
+        ):
             try:
                 refreshed = await self._fetch_instrument(symbol)
             except Exception:
                 refreshed = None
             if refreshed is not None:
                 cached = refreshed
+        if cached is None:
+            return None
         observed_at = observed_at or self.observed_at()
         return MarketSnapshotData(
             venue=self.name,

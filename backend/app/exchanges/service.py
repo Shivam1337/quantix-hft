@@ -31,6 +31,12 @@ class ExchangeService:
             raise RuntimeError("all exchange market adapters failed")
         return snapshots
 
+    async def close(self) -> None:
+        for adapter in self.adapters:
+            close = getattr(adapter, "aclose", None)
+            if close is not None:
+                await close()
+
     async def stream_all(self, rest_fallback_seconds: int = 120):
         queue: asyncio.Queue[MarketSnapshotData] = asyncio.Queue(maxsize=1000)
 
@@ -87,5 +93,14 @@ class ExchangeService:
 
 def build_exchange_service(settings: Settings) -> ExchangeService:
     return ExchangeService(
-        [HyperliquidAdapter(), AevoAdapter(), LighterAdapter()], settings.symbols
+        [
+            HyperliquidAdapter(),
+            AevoAdapter(
+                refresh_interval_seconds=settings.aevo_refresh_interval_seconds,
+                request_interval_seconds=settings.aevo_request_interval_seconds,
+                max_concurrent_requests=settings.aevo_max_concurrent_requests,
+            ),
+            LighterAdapter(),
+        ],
+        settings.symbols,
     )

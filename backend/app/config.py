@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     market_poll_seconds: int = Field(default=30, ge=5, le=3600)
     websocket_batch_ms: int = Field(default=500, ge=50, le=5000)
     rest_fallback_seconds: int = Field(default=120, ge=15, le=3600)
+    aevo_refresh_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    aevo_request_interval_seconds: float = Field(default=1.0, ge=0.1, le=10)
+    aevo_max_concurrent_requests: int = Field(default=2, ge=1, le=10)
     symbols: list[str] = [
         "BTC-PERP",
         "ETH-PERP",

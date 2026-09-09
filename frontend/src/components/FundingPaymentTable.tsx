@@ -51,7 +51,7 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan"></span>
                     </span>
-                    Current Cycle Estimate
+                    Awaiting Confirmed Settlement
                   </td>
                   <td className="font-bold text-white">{pos.symbol}</td>
                   <td>
@@ -62,7 +62,7 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                         </span>
                         {opp && (
                           <span className="text-[10px] text-slate-400 font-mono">
-                            {(opp.long_funding_rate * 100).toFixed(4)}%
+                            confirmed history median {(opp.long_funding_rate * 100).toFixed(4)}%
                           </span>
                         )}
                       </div>
@@ -83,7 +83,7 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                         </span>
                         {opp && (
                           <span className="text-[10px] text-slate-400 font-mono">
-                            {(opp.short_funding_rate * 100).toFixed(4)}%
+                            confirmed history median {(opp.short_funding_rate * 100).toFixed(4)}%
                           </span>
                         )}
                       </div>
@@ -106,13 +106,13 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                         {netAmt >= 0 ? `+$${netAmt.toFixed(4)}` : `-$${Math.abs(netAmt).toFixed(4)}`}
                       </span>
                       <span className="text-[10px] text-slate-500">
-                        Settled total: {settledAmt >= 0 ? `+$${settledAmt.toFixed(4)}` : `-$${Math.abs(settledAmt).toFixed(4)}`}
+                        Confirmed total: {settledAmt >= 0 ? `+$${settledAmt.toFixed(4)}` : `-$${Math.abs(settledAmt).toFixed(4)}`}
                       </span>
                     </div>
                   </td>
                   <td>
                     <span className="tag receive text-[11px] font-semibold tracking-wide">
-                      ESTIMATE
+                      PENDING · NO P&L ESTIMATE
                     </span>
                   </td>
                 </tr>
@@ -183,11 +183,7 @@ export function FundingPaymentTable({ payments, activePositions = [], opportunit
                   </td>
                   <td>
                     <span className="tag text-[11px] text-slate-400 bg-slate-800/60 border border-slate-700">
-                      {p.settlement_type !== "simulated"
-                        ? "SETTLED"
-                        : p.rate_source === "market_snapshot"
-                          ? "SIMULATED SETTLED"
-                          : "SIMULATED · FALLBACK RATE"}
+                      {p.rate_source === "exchange_history" ? "CONFIRMED SETTLEMENT" : "UNVERIFIED"}
                     </span>
                   </td>
                 </tr>

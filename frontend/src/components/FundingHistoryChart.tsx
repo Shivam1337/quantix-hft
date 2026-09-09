@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import type { FundingSnapshot } from "../types";
+import type { FundingSettlement } from "../types";
 
 type Props = {
-  records: FundingSnapshot[];
+  records: FundingSettlement[];
   symbol: string;
   venue: string;
 };
@@ -12,7 +12,7 @@ export function FundingHistoryChart({ records, symbol, venue }: Props) {
 
   // Chronological order (oldest to newest)
   const sorted = useMemo(
-    () => [...records].sort((a, b) => new Date(a.observed_at).getTime() - new Date(b.observed_at).getTime()),
+    () => [...records].sort((a, b) => new Date(a.settled_at).getTime() - new Date(b.settled_at).getTime()),
     [records]
   );
 
@@ -63,14 +63,14 @@ export function FundingHistoryChart({ records, symbol, venue }: Props) {
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className="text-slate-400">{sorted.length} recorded cycles</span>
-          <span className="count-badge">{(stats.latest.funding_rate * 100).toFixed(4)}%/h</span>
+          <span className="count-badge">{(stats.latest.funding_rate * 100).toFixed(4)}%/h confirmed</span>
         </div>
       </div>
 
       {/* Summary Metrics Bar */}
       <div className="grid grid-cols-2 gap-px border-b border-slate-800 bg-slate-800 sm:grid-cols-4">
         <div className="bg-slate-900/50 p-3">
-          <span className="text-[10px] uppercase text-slate-500">Current Rate / APR</span>
+          <span className="text-[10px] uppercase text-slate-500">Latest Confirmed / APR</span>
           <p className="font-mono text-sm font-semibold text-cyan">
             {(stats.latest.funding_rate * 100).toFixed(4)}% · {(stats.latest.funding_rate * 24 * 365 * 100).toFixed(1)}% APR
           </p>
@@ -102,13 +102,13 @@ export function FundingHistoryChart({ records, symbol, venue }: Props) {
             className="pointer-events-none absolute z-10 -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-900/95 px-3 py-1.5 shadow-xl backdrop-blur-sm"
             style={{ left: `${(getX(hoveredIdx) / width) * 100}%`, top: "20px" }}
           >
-            <div className="text-[10px] text-slate-400">{new Date(hovered.observed_at).toLocaleString()}</div>
+            <div className="text-[10px] text-slate-400">{new Date(hovered.settled_at).toLocaleString()}</div>
             <div className="flex items-center gap-2 font-mono text-xs">
               <span className={hovered.funding_rate >= 0 ? "text-emerald-300" : "text-rose-400"}>
                 {(hovered.funding_rate * 100).toFixed(4)}%/h
               </span>
               <span className="text-slate-500">·</span>
-              <span className="text-slate-200">${hovered.mark_price.toLocaleString()}</span>
+              <span className="text-slate-200">exchange confirmed</span>
             </div>
           </div>
         )}
@@ -132,10 +132,10 @@ export function FundingHistoryChart({ records, symbol, venue }: Props) {
 
           {/* X Axis Range Labels */}
           <text x={padding.left} y={height - 10} fill="#64748b" fontSize="9" textAnchor="start">
-            {new Date(sorted[0].observed_at).toLocaleDateString()}
+            {new Date(sorted[0].settled_at).toLocaleDateString()}
           </text>
           <text x={width - padding.right} y={height - 10} fill="#64748b" fontSize="9" textAnchor="end">
-            {new Date(sorted[sorted.length - 1].observed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {new Date(sorted[sorted.length - 1].settled_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </text>
 
           {/* Rate Curve */}

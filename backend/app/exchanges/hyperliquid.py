@@ -1,9 +1,10 @@
 import json
+from datetime import datetime, timezone
 
 from websockets import connect
 
-from app.domain.types import MarketSnapshotData
-from app.exchanges.base import HttpExchangeAdapter, funding_cycle_at
+from app.domain.types import FundingSettlementData, MarketSnapshotData
+from app.exchanges.base import ExchangeError, HttpExchangeAdapter, funding_cycle_at
 
 
 class HyperliquidAdapter(HttpExchangeAdapter):
@@ -23,11 +24,9 @@ class HyperliquidAdapter(HttpExchangeAdapter):
             if symbol not in wanted:
                 continue
             price = self.number(context.get("markPx")) or self.number(context.get("oraclePx"))
-            funding = self.number_or_none(context.get("funding"))
             oi_units = self.number_or_none(context.get("openInterest"))
-            if not price or funding is None or oi_units is None:
+            if not price or oi_units is None:
                 continue
-            observed_at = self.observed_at()
             impact_prices = context.get("impactPxs") or []
             bid = self.number(impact_prices[0]) if len(impact_prices) > 0 else price
             ask = self.number(impact_prices[1]) if len(impact_prices) > 1 else price
@@ -35,18 +34,62 @@ class HyperliquidAdapter(HttpExchangeAdapter):
                 MarketSnapshotData(
                     venue=self.name,
                     symbol=symbol,
-                    funding_rate=funding,
                     mark_price=price,
                     open_interest=oi_units * price,
                     bid=bid,
                     ask=ask,
-                    observed_at=observed_at,
-                    funding_rate_native=funding,
-                    funding_interval_hours=1.0,
-                    funding_cycle_at=funding_cycle_at(observed_at),
+                    observed_at=self.observed_at(),
                 )
             )
         return output
+
+    async def fetch_funding_history(
+        self,
+        symbols: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[FundingSettlementData]:
+        rows: list[FundingSettlementData] = []
+        start_ms = int(start_time.astimezone(timezone.utc).timestamp() * 1000)
+        end_ms = int(end_time.astimezone(timezone.utc).timestamp() * 1000)
+        for requested_symbol in symbols:
+            coin = requested_symbol.removesuffix("-PERP")
+            try:
+                payload = await self._request(
+                    "POST",
+                    "/info",
+                    json={
+                        "type": "fundingHistory",
+                        "coin": coin,
+                        "startTime": start_ms,
+                        "endTime": end_ms,
+                    },
+                )
+            except ExchangeError:
+                continue
+            if not isinstance(payload, list):
+                continue
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                rate = self.number_or_none(item.get("fundingRate"))
+                timestamp_ms = self.number_or_none(item.get("time"))
+                if rate is None or timestamp_ms is None:
+                    continue
+                settled_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+                rows.append(
+                    FundingSettlementData(
+                        venue=self.name,
+                        symbol=self.normalize_symbol(item.get("coin") or requested_symbol),
+                        funding_rate=rate,
+                        funding_rate_native=rate,
+                        funding_interval_hours=1.0,
+                        funding_cycle_at=funding_cycle_at(settled_at, 1.0),
+                        settled_at=settled_at,
+                        source="hyperliquid_funding_history",
+                    )
+                )
+        return rows
 
     async def stream_markets(self, symbols: list[str]):
         async with connect(
@@ -72,20 +115,14 @@ class HyperliquidAdapter(HttpExchangeAdapter):
                 context = data.get("ctx", {})
                 symbol = self.normalize_symbol(data.get("coin"))
                 price = self.number(context.get("markPx")) or self.number(context.get("oraclePx"))
-                funding = self.number_or_none(context.get("funding"))
                 oi_units = self.number_or_none(context.get("openInterest"))
-                if price and funding is not None and oi_units is not None:
-                    observed_at = self.observed_at()
+                if price and oi_units is not None:
                     yield MarketSnapshotData(
                         venue=self.name,
                         symbol=symbol,
-                        funding_rate=funding,
                         mark_price=price,
                         open_interest=oi_units * price,
                         bid=price,
                         ask=price,
-                        observed_at=observed_at,
-                        funding_rate_native=funding,
-                        funding_interval_hours=1.0,
-                        funding_cycle_at=funding_cycle_at(observed_at),
+                        observed_at=self.observed_at(),
                     )

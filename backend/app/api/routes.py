@@ -1,13 +1,13 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import select
 
-from app.api.position_schemas import PositionRead
+from app.api.position_schemas import FundingPendingCycleRead, PositionRead
 from app.domain.entry import entry_rejection_reason
 from app.domain.positioning import opportunity_for_position
-from app.models import FundingSnapshot, TradeLog
+from app.models import FundingPendingCycle, TradeLog
 from app.schemas import (
     ClosePositionRequest,
-    FundingSnapshotRead,
+    FundingSettlementRead,
     HealthRead,
     OpenPositionRequest,
     OpportunityRead,
@@ -37,7 +37,7 @@ async def health(request: Request) -> HealthRead:
     return HealthRead(
         status="ok",
         environment=settings.environment,
-        data_mode="live-read-only",
+        data_mode="historical-confirmed-rates",
         scheduler_enabled=settings.enable_scheduler,
         last_refresh=request.app.state.market.last_refresh,
     )
@@ -77,23 +77,29 @@ async def positions(request: Request, active_only: bool = True) -> list[Position
     return [PositionRead.model_validate(value) for value in values]
 
 
-@router.get("/funding-history", response_model=list[FundingSnapshotRead])
+@router.get("/funding-history", response_model=list[FundingSettlementRead])
 async def funding_history(
     request: Request,
     venue: str | None = Query(default=None),
     symbol: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
-) -> list[FundingSnapshotRead]:
-    statement = select(FundingSnapshot).order_by(
-        FundingSnapshot.funding_cycle_at.desc(), FundingSnapshot.observed_at.desc()
+) -> list[FundingSettlementRead]:
+    values = await request.app.state.market.historical_service.list_settlements(
+        venue=venue, symbol=symbol, limit=limit
+    )
+    return [FundingSettlementRead.model_validate(value) for value in values]
+
+
+@router.get("/funding-pending", response_model=list[FundingPendingCycleRead])
+async def funding_pending(
+    request: Request, limit: int = Query(default=100, ge=1, le=500)
+) -> list[FundingPendingCycleRead]:
+    statement = select(FundingPendingCycle).order_by(
+        FundingPendingCycle.cycle_at.desc(), FundingPendingCycle.id.desc()
     ).limit(limit)
-    if venue:
-        statement = statement.where(FundingSnapshot.venue == venue.lower())
-    if symbol:
-        statement = statement.where(FundingSnapshot.symbol == symbol.upper())
     async with request.app.state.session_factory() as session:
         values = list((await session.execute(statement)).scalars())
-    return [FundingSnapshotRead.model_validate(value) for value in values]
+    return [FundingPendingCycleRead.model_validate(value) for value in values]
 
 
 @router.post("/positions/open", response_model=PositionRead, status_code=status.HTTP_201_CREATED)

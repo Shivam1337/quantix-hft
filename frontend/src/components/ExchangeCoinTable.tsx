@@ -20,7 +20,7 @@ export function ExchangeCoinTable({ markets, venue, selectedSymbol, onSelectSymb
       <div className="section-heading">
         <div>
           <p className="eyebrow text-cyan">{venue.toUpperCase()} Markets</p>
-          <h2>Available Coins & Live Rates</h2>
+          <h2>Available Coins & Confirmed Rates</h2>
         </div>
         <div className="flex items-center gap-3">
           <input
@@ -39,7 +39,7 @@ export function ExchangeCoinTable({ markets, venue, selectedSymbol, onSelectSymb
           <thead>
             <tr>
               <th>Symbol</th>
-              <th>Current Rate / h</th>
+              <th>Confirmed Rate / h</th>
               <th>Annualized APR</th>
               <th>Mark Price</th>
               <th>Bid / Ask</th>
@@ -51,7 +51,8 @@ export function ExchangeCoinTable({ markets, venue, selectedSymbol, onSelectSymb
           <tbody>
             {filtered.map((item) => {
               const isSelected = selectedSymbol === item.symbol;
-              const apr = item.funding_rate * 24 * 365 * 100;
+              const rate = item.funding_rate;
+              const apr = rate === null ? null : rate * 24 * 365 * 100;
               const spreadBps = item.mark_price > 0 ? ((item.ask - item.bid) / item.mark_price) * 10_000 : 0;
 
               return (
@@ -71,16 +72,15 @@ export function ExchangeCoinTable({ markets, venue, selectedSymbol, onSelectSymb
                   <td>
                     <span
                       className={`font-mono font-medium ${
-                        item.funding_rate >= 0 ? "text-emerald-300" : "text-rose-400"
+                        rate === null ? "text-slate-500" : rate >= 0 ? "text-emerald-300" : "text-rose-400"
                       }`}
                     >
-                      {item.funding_rate >= 0 ? "+" : ""}
-                      {(item.funding_rate * 100).toFixed(4)}%
+                      {rate === null ? "—" : `${rate >= 0 ? "+" : ""}${(rate * 100).toFixed(4)}%`}
                     </span>
+                    {rate === null && <div className="text-[10px] text-slate-500">No exchange confirmation</div>}
                   </td>
                   <td className="font-mono text-cyan font-semibold">
-                    {apr >= 0 ? "+" : ""}
-                    {apr.toFixed(1)}%
+                    {apr === null ? "—" : `${apr >= 0 ? "+" : ""}${apr.toFixed(1)}%`}
                   </td>
                   <td className="font-mono text-slate-200">
                     ${item.mark_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -93,7 +93,7 @@ export function ExchangeCoinTable({ markets, venue, selectedSymbol, onSelectSymb
                     ${item.open_interest.toLocaleString()}
                   </td>
                   <td>
-                    <span className="tag receive">{item.funding_interval_hours}h</span>
+                    <span className="tag receive">{rate === null ? "—" : `${item.funding_interval_hours}h`}</span>
                   </td>
                   <td>
                     <button

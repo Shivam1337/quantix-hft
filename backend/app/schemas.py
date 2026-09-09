@@ -34,21 +34,20 @@ class OpportunityRead(ReadModel):
     historical_3d_apr_pct: float | None = None
     historical_snapshots_count: int = 0
     spread_stability_pct: float | None = None
+    funding_rate_source: str = "confirmed_history"
+    funding_history_latest_cycle: datetime | None = None
 
 
-class FundingSnapshotRead(ReadModel):
+class FundingSettlementRead(ReadModel):
     id: int
     venue: str
     symbol: str
     funding_rate: float
     funding_rate_native: float | None
     funding_interval_hours: float
-    funding_cycle_at: datetime | None
-    mark_price: float
-    open_interest: float
-    bid: float
-    ask: float
-    observed_at: datetime
+    funding_cycle_at: datetime
+    settled_at: datetime
+    source: str
     created_at: datetime
 
 
@@ -107,7 +106,6 @@ class SettingsRead(ReadModel):
     auto_unwind: bool
     entry_min_history_snapshots: int
     entry_min_spread_stability_pct: float
-    entry_max_apr_ratio: float
     alert_webhook_url: str | None
 
 
@@ -118,7 +116,6 @@ class SettingsUpdate(BaseModel):
     auto_unwind: bool | None = None
     entry_min_history_snapshots: int | None = Field(default=None, ge=2, le=100)
     entry_min_spread_stability_pct: float | None = Field(default=None, ge=0, le=100)
-    entry_max_apr_ratio: float | None = Field(default=None, gt=1, le=20)
     alert_webhook_url: str | None = None
 
 
@@ -161,9 +158,11 @@ class SystemMetricsRead(BaseModel):
 class ExchangeMarketRead(ReadModel):
     venue: str
     symbol: str
-    funding_rate: float
+    funding_rate: float | None = None
     funding_rate_native: float | None = None
-    funding_interval_hours: float
+    funding_interval_hours: float = 1.0
+    funding_cycle_at: datetime | None = None
+    funding_rate_source: str = "confirmed_history"
     mark_price: float
     open_interest: float
     bid: float
@@ -193,4 +192,3 @@ class SimulationResetResponse(BaseModel):
     status: str
     message: str
     account: SimulationAccountRead
-

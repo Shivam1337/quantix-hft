@@ -171,7 +171,7 @@ class SimulationService:
 
                     if leg_size_usd >= 50:
                         hist_desc = (
-                            f"3d avg APR: {best.historical_3d_apr_pct:.1f}% "
+                            f"confirmed history APR: {best.historical_3d_apr_pct:.1f}% "
                             f"({best.historical_snapshots_count} snaps, "
                             f"{best.spread_stability_pct:.0f}% stability)"
                             if best.historical_3d_apr_pct is not None
@@ -180,10 +180,9 @@ class SimulationService:
                         open_reason = (
                             f"Auto-opened: Top ranked spread {best.symbol} "
                             f"({best.long_venue}/{best.short_venue}). "
-                            f"Spot APR: {best.net_apr_pct:.1f}%, Basis: {best.basis_bps:.1f} bps. "
-                            f"Historical verification: {hist_desc}. "
-                            "Entry confirmation: current APR within "
-                            f"{settings.entry_max_apr_ratio:.1f}x history. "
+                            f"Confirmed-rate APR: {best.net_apr_pct:.1f}%, "
+                            f"Basis: {best.basis_bps:.1f} bps. "
+                            f"Funding source: {hist_desc}. "
                             f"Sized at ${leg_size_usd:,.2f}/leg (50% of "
                             f"${account.current_balance:,.2f} account balance)."
                         )

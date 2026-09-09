@@ -5,19 +5,19 @@ import pytest
 async def test_health_and_opportunity_radar(client):
     health = await client.get("/api/v1/health")
     assert health.status_code == 200
-    assert health.json()["data_mode"] == "live-read-only"
+    assert health.json()["data_mode"] == "historical-confirmed-rates"
 
     response = await client.get("/api/v1/opportunities?refresh=true")
     assert response.status_code == 200
     assert len(response.json()) == 6
     assert response.json()[0]["net_apr_pct"] > 10
-    assert all(item["eligible"] is False for item in response.json())
+    assert all(item["funding_rate_source"] == "confirmed_history" for item in response.json())
     history = await client.get("/api/v1/funding-history?symbol=BTC-PERP")
     assert history.status_code == 200
-    assert len(history.json()) == 3
+    assert len(history.json()) >= 6
     assert all(item["funding_interval_hours"] == 1 for item in history.json())
     await client.get("/api/v1/opportunities?refresh=true")
-    assert len((await client.get("/api/v1/funding-history?symbol=BTC-PERP")).json()) == 3
+    assert len((await client.get("/api/v1/funding-history?symbol=BTC-PERP")).json()) >= 6
 
 
 @pytest.mark.asyncio

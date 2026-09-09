@@ -1,8 +1,9 @@
 import asyncio
 import logging
+from datetime import datetime
 
 from app.config import Settings
-from app.domain.types import MarketSnapshotData
+from app.domain.types import FundingSettlementData, MarketSnapshotData
 from app.exchanges.aevo import AevoAdapter
 from app.exchanges.base import ExchangeAdapter
 from app.exchanges.hyperliquid import HyperliquidAdapter
@@ -36,6 +37,27 @@ class ExchangeService:
             close = getattr(adapter, "aclose", None)
             if close is not None:
                 await close()
+
+    async def fetch_funding_history(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[FundingSettlementData]:
+        """Fetch confirmed settlements; failures never become live-rate fallbacks."""
+        results = await asyncio.gather(
+            *(
+                adapter.fetch_funding_history(self.symbols, start_time, end_time)
+                for adapter in self.adapters
+            ),
+            return_exceptions=True,
+        )
+        rows: list[FundingSettlementData] = []
+        for adapter, result in zip(self.adapters, results):
+            if isinstance(result, Exception):
+                logger.warning("funding history %s unavailable: %s", adapter.name, result)
+                continue
+            rows.extend(result)
+        return rows
 
     async def stream_all(self, rest_fallback_seconds: int = 120):
         queue: asyncio.Queue[MarketSnapshotData] = asyncio.Queue(maxsize=1000)

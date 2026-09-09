@@ -5,7 +5,7 @@ from typing import Any
 
 from websockets import connect
 
-from app.domain.types import MarketSnapshotData
+from app.domain.types import FundingSettlementData, MarketSnapshotData
 from app.exchanges.base import (
     ExchangeError,
     ExchangeRateLimited,
@@ -23,7 +23,6 @@ class AevoAdapter(HttpExchangeAdapter):
         max_concurrent_requests: int = 2,
     ):
         super().__init__("aevo", base_url)
-        self._open_interest: dict[str, float] = {}
         self._latest: dict[str, MarketSnapshotData] = {}
         self._refresh_after: dict[str, datetime] = {}
         self._refresh_interval = timedelta(seconds=max(60, refresh_interval_seconds))
@@ -54,11 +53,7 @@ class AevoAdapter(HttpExchangeAdapter):
                 async with self._request_slots:
                     await self._wait_for_request_slot()
                     instrument = await self._request("GET", f"/instrument/{instrument_name}")
-                    await self._wait_for_request_slot()
-                    funding = await self._request(
-                        "GET", "/funding", params={"instrument_name": instrument_name}
-                    )
-                value = self._snapshot(instrument, funding)
+                value = self._snapshot(instrument)
             except ExchangeRateLimited as exc:
                 self._schedule_retry(normalized, exc.retry_after_seconds)
                 return self._latest.get(normalized)
@@ -71,14 +66,108 @@ class AevoAdapter(HttpExchangeAdapter):
                 self._failure_count.pop(normalized, None)
             return value
 
+    async def fetch_funding_history(
+        self,
+        symbols: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[FundingSettlementData]:
+        results = await asyncio.gather(
+            *(self._fetch_history(symbol, start_time, end_time) for symbol in symbols),
+            return_exceptions=True,
+        )
+        rows: list[FundingSettlementData] = []
+        for result in results:
+            if isinstance(result, list):
+                rows.extend(result)
+        return rows
+
+    async def _fetch_history(
+        self, symbol: str, start_time: datetime, end_time: datetime
+    ) -> list[FundingSettlementData]:
+        instrument_name = symbol if symbol.endswith("-PERP") else f"{symbol}-PERP"
+        try:
+            async with self._request_slots:
+                await self._wait_for_request_slot()
+                payload = await self._request(
+                    "GET",
+                    "/funding-history",
+                    params={
+                        "instrument_name": instrument_name,
+                        "start_timestamp": int(start_time.timestamp() * 1_000_000_000),
+                        "end_timestamp": int(end_time.timestamp() * 1_000_000_000),
+                        "limit": 1000,
+                    },
+                )
+        except (ExchangeError, ExchangeRateLimited):
+            return []
+        return self._history_rows(payload, instrument_name)
+
+    def _snapshot(self, instrument: dict[str, Any]) -> MarketSnapshotData | None:
+        if not isinstance(instrument, dict):
+            return None
+        symbol = self.normalize_symbol(instrument.get("instrument_name"))
+        mark = self.number_or_none(instrument.get("mark_price"))
+        markets = instrument.get("markets") or {}
+        oi_contracts = self.number_or_none(markets.get("total_oi"))
+        best_bid = self.number_or_none((instrument.get("best_bid") or {}).get("price"))
+        best_ask = self.number_or_none((instrument.get("best_ask") or {}).get("price"))
+        if not mark or oi_contracts is None or best_bid is None or best_ask is None:
+            return None
+        value = MarketSnapshotData(
+            venue=self.name,
+            symbol=symbol,
+            mark_price=mark,
+            open_interest=oi_contracts * mark,
+            bid=best_bid,
+            ask=best_ask,
+            observed_at=self.observed_at(),
+        )
+        self._latest[symbol] = value
+        self._refresh_after[symbol] = value.observed_at + self._refresh_interval
+        return value
+
+    @staticmethod
+    def _history_rows(payload: Any, requested_symbol: str) -> list[FundingSettlementData]:
+        values = payload.get("funding_history", []) if isinstance(payload, dict) else []
+        rows: list[FundingSettlementData] = []
+        for item in values:
+            if isinstance(item, (list, tuple)) and len(item) >= 3:
+                symbol, timestamp, rate = item[:3]
+            elif isinstance(item, dict):
+                symbol = item.get("instrument_name") or requested_symbol
+                timestamp = item.get("timestamp")
+                if timestamp is None:
+                    timestamp = item.get("funding_time")
+                rate = item.get("funding_rate")
+                if rate is None:
+                    rate = item.get("rate")
+            else:
+                continue
+            timestamp_value = AevoAdapter._epoch_datetime(timestamp)
+            rate_value = AevoAdapter.number_or_none(rate)
+            if timestamp_value is None or rate_value is None:
+                continue
+            rows.append(
+                FundingSettlementData(
+                    venue="aevo",
+                    symbol=AevoAdapter.normalize_symbol(symbol),
+                    funding_rate=rate_value,
+                    funding_rate_native=rate_value,
+                    funding_interval_hours=1.0,
+                    funding_cycle_at=funding_cycle_at(timestamp_value, 1.0),
+                    settled_at=timestamp_value,
+                    source="aevo_funding_history",
+                )
+            )
+        return rows
+
     async def _wait_for_request_slot(self) -> None:
         loop = asyncio.get_running_loop()
         async with self._rate_lock:
             now = loop.time()
             delay = max(0.0, self._next_request_at - now)
-            self._next_request_at = max(now, self._next_request_at) + (
-                self._request_interval_seconds
-            )
+            self._next_request_at = max(now, self._next_request_at) + self._request_interval_seconds
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -86,52 +175,9 @@ class AevoAdapter(HttpExchangeAdapter):
         failures = self._failure_count.get(symbol, 0) + 1
         self._failure_count[symbol] = failures
         backoff = min(300.0, 30.0 * (2 ** min(failures - 1, 3)))
-        delay = max(backoff, retry_after_seconds)
-        self._refresh_after[symbol] = self.observed_at() + timedelta(seconds=delay)
-
-    def _snapshot(
-        self, instrument: dict[str, Any], funding: dict[str, Any]
-    ) -> MarketSnapshotData | None:
-        if not isinstance(instrument, dict) or not isinstance(funding, dict):
-            return None
-        symbol = self.normalize_symbol(instrument.get("instrument_name"))
-        mark = self.number_or_none(instrument.get("mark_price"))
-        funding_rate = self.number_or_none(funding.get("funding_rate"))
-        funding_rate = funding_rate if funding_rate is not None else self.number_or_none(
-            instrument.get("funding_rate")
+        self._refresh_after[symbol] = self.observed_at() + timedelta(
+            seconds=max(backoff, retry_after_seconds)
         )
-        markets = instrument.get("markets") or {}
-        oi_contracts = self.number_or_none(markets.get("total_oi"))
-        best_bid = self.number_or_none((instrument.get("best_bid") or {}).get("price"))
-        best_ask = self.number_or_none((instrument.get("best_ask") or {}).get("price"))
-        if (
-            not mark
-            or funding_rate is None
-            or oi_contracts is None
-            or best_bid is None
-            or best_ask is None
-        ):
-            return None
-        observed_at = self.observed_at()
-        open_interest = oi_contracts * mark
-        self._open_interest[symbol] = open_interest
-        next_funding_at = self._epoch_datetime(funding.get("next_epoch"))
-        value = MarketSnapshotData(
-            venue=self.name,
-            symbol=symbol,
-            funding_rate=funding_rate,
-            mark_price=mark,
-            open_interest=open_interest,
-            bid=best_bid,
-            ask=best_ask,
-            observed_at=observed_at,
-            funding_rate_native=funding_rate,
-            funding_interval_hours=1.0,
-            funding_cycle_at=funding_cycle_at(next_funding_at or observed_at, 1.0),
-        )
-        self._latest[symbol] = value
-        self._refresh_after[symbol] = observed_at + self._refresh_interval
-        return value
 
     async def stream_markets(self, symbols: list[str]):
         wanted = {self.normalize_symbol(symbol) for symbol in symbols}
@@ -173,32 +219,24 @@ class AevoAdapter(HttpExchangeAdapter):
         if cached is None or now >= self._refresh_after.get(
             symbol, datetime.min.replace(tzinfo=timezone.utc)
         ):
-            try:
-                refreshed = await self._fetch_instrument(symbol)
-            except Exception:
-                refreshed = None
-            if refreshed is not None:
-                cached = refreshed
+            cached = await self._fetch_instrument(symbol)
         if cached is None:
             return None
-        observed_at = observed_at or self.observed_at()
         return MarketSnapshotData(
             venue=self.name,
             symbol=symbol,
-            funding_rate=cached.funding_rate,
             mark_price=cached.mark_price,
             open_interest=cached.open_interest,
             bid=bid,
             ask=ask,
-            observed_at=observed_at,
-            funding_rate_native=cached.funding_rate_native,
-            funding_interval_hours=cached.funding_interval_hours,
-            funding_cycle_at=cached.funding_cycle_at,
+            observed_at=observed_at or self.observed_at(),
         )
 
     @staticmethod
     def _epoch_datetime(value: Any) -> datetime | None:
         try:
-            return datetime.fromtimestamp(float(value) / 1_000_000_000, tz=timezone.utc)
+            numeric = float(value)
+            divisor = 1_000_000_000 if numeric > 10_000_000_000 else 1_000
+            return datetime.fromtimestamp(numeric / divisor, tz=timezone.utc)
         except (TypeError, ValueError, OverflowError):
             return None

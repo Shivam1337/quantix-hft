@@ -82,7 +82,7 @@ export function Simulator({
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
               Our system takes the account balance, divides it in half, and sizes each leg equally (50% Long, 50% Short).
-              Positions are opened and closed automatically based on up to 3 days of historical funding snapshots stored in DB.
+              Positions are opened and closed automatically based on up to 3 days of exchange-confirmed funding settlements stored in DB.
             </p>
           </div>
         </div>
@@ -151,4 +151,3 @@ export function Simulator({
     </div>
   );
 }
-

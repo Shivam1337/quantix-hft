@@ -1,14 +1,14 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.types import OpportunityData
-from app.models import FundingPayment, FundingSnapshot, Position
+from app.models import FundingPayment, FundingPendingCycle, FundingSettlement, Position
 
 
 class FundingLedger:
-    """Maintain settled funding rows and a separate current-cycle estimate."""
+    """Account for confirmed funding only; unconfirmed cycles remain pending."""
 
     async def mark_position(
         self,
@@ -29,31 +29,19 @@ class FundingLedger:
 
         cycle = last_cycle + timedelta(hours=1)
         while cycle <= current_cycle:
-            await self._settle_cycle(session, position, opportunity, cycle)
+            confirmed = await self._settle_cycle(session, position, opportunity, cycle)
+            if not confirmed:
+                break
             position.last_funding_cycle = cycle
             cycle += timedelta(hours=1)
 
-        start = self._aware(position.accrual_started_at) if position.accrual_started_at else now
-        start = max(start, current_cycle)
-        elapsed_hours = max(0.0, (now - start).total_seconds() / 3600)
-        leg_size = position.leg_size_usd or position.size_usd
-        position.accrued_long_funding_pnl_usd = (
-            -opportunity.long_funding_rate * leg_size * elapsed_hours
-        )
-        position.accrued_short_funding_pnl_usd = (
-            opportunity.short_funding_rate * leg_size * elapsed_hours
-        )
-        position.accrued_funding_pnl_usd = (
-            position.accrued_long_funding_pnl_usd + position.accrued_short_funding_pnl_usd
-        )
-        position.long_funding_pnl_usd = (
-            (position.settled_long_funding_pnl_usd or 0.0)
-            + position.accrued_long_funding_pnl_usd
-        )
-        position.short_funding_pnl_usd = (
-            (position.settled_short_funding_pnl_usd or 0.0)
-            + position.accrued_short_funding_pnl_usd
-        )
+        # A missing confirmation is not an estimate. It contributes zero to
+        # P&L until the exchange history endpoint confirms the cycle.
+        position.accrued_long_funding_pnl_usd = 0.0
+        position.accrued_short_funding_pnl_usd = 0.0
+        position.accrued_funding_pnl_usd = 0.0
+        position.long_funding_pnl_usd = position.settled_long_funding_pnl_usd or 0.0
+        position.short_funding_pnl_usd = position.settled_short_funding_pnl_usd or 0.0
         position.funding_pnl_usd = position.long_funding_pnl_usd + position.short_funding_pnl_usd
         position.current_long_price = opportunity.long_mark_price
         position.current_short_price = opportunity.short_mark_price
@@ -68,7 +56,7 @@ class FundingLedger:
         position.last_net_apr_pct = opportunity.net_apr_pct
         position.last_long_funding_rate = opportunity.long_funding_rate
         position.last_short_funding_rate = opportunity.short_funding_rate
-        position.last_rate_observed_at = opportunity.observed_at
+        position.last_rate_observed_at = opportunity.funding_history_latest_cycle
         self._update_negative_hours(position, opportunity.net_apr_pct, now)
         position.updated_at = now
 
@@ -78,44 +66,56 @@ class FundingLedger:
         position: Position,
         opportunity: OpportunityData,
         cycle: datetime,
-    ) -> None:
+    ) -> bool:
         existing = await session.scalar(
             select(FundingPayment).where(
                 FundingPayment.position_id == position.id,
                 FundingPayment.cycle_at == cycle,
+                FundingPayment.rate_source == "exchange_history",
+                FundingPayment.settlement_type == "confirmed",
             )
         )
         if existing is not None:
-            return
+            return True
 
-        long_rate, long_source = await self._cycle_rate(
-            session, position.symbol, position.long_venue, cycle, opportunity.long_funding_rate
+        long_settlement = await self._cycle_settlement(
+            session, position.symbol, position.long_venue, cycle
         )
-        short_rate, short_source = await self._cycle_rate(
-            session, position.symbol, position.short_venue, cycle, opportunity.short_funding_rate
+        short_settlement = await self._cycle_settlement(
+            session, position.symbol, position.short_venue, cycle
+        )
+        if long_settlement is None or short_settlement is None:
+            missing = []
+            if long_settlement is None:
+                missing.append(position.long_venue)
+            if short_settlement is None:
+                missing.append(position.short_venue)
+            await self._mark_pending(session, position, cycle, ", ".join(missing))
+            return False
+
+        await session.execute(
+            delete(FundingPendingCycle).where(
+                FundingPendingCycle.position_id == position.id,
+                FundingPendingCycle.cycle_at == cycle,
+            )
         )
         leg_size = position.leg_size_usd or position.size_usd
-        long_payment = -long_rate * leg_size
-        short_payment = short_rate * leg_size
-        source = (
-            "market_snapshot"
-            if long_source == short_source == "market_snapshot"
-            else "current_estimate"
-        )
+        long_payment = -long_settlement.funding_rate * leg_size
+        short_payment = short_settlement.funding_rate * leg_size
         session.add(
             FundingPayment(
                 position_id=position.id,
                 symbol=position.symbol,
                 long_venue=position.long_venue,
                 short_venue=position.short_venue,
-                long_rate=long_rate,
-                short_rate=short_rate,
+                long_rate=long_settlement.funding_rate,
+                short_rate=short_settlement.funding_rate,
                 long_payment_usd=long_payment,
                 short_payment_usd=short_payment,
                 net_payment_usd=long_payment + short_payment,
                 cycle_at=cycle,
-                settlement_type="simulated",
-                rate_source=source,
+                settlement_type="confirmed",
+                rate_source="exchange_history",
             )
         )
         position.settled_long_funding_pnl_usd = (
@@ -128,27 +128,53 @@ class FundingLedger:
             position.settled_long_funding_pnl_usd + position.settled_short_funding_pnl_usd
         )
         position.accrual_started_at = cycle
+        return True
 
-    async def _cycle_rate(
+    async def _cycle_settlement(
         self,
         session: AsyncSession,
         symbol: str,
         venue: str,
         cycle: datetime,
-        fallback: float,
-    ) -> tuple[float, str]:
-        snapshot = await session.scalar(
-            select(FundingSnapshot)
-            .where(
-                FundingSnapshot.symbol == symbol,
-                FundingSnapshot.venue == venue,
-                FundingSnapshot.funding_cycle_at == cycle,
+    ) -> FundingSettlement | None:
+        return await session.scalar(
+            select(FundingSettlement).where(
+                FundingSettlement.symbol == symbol.upper(),
+                FundingSettlement.venue == venue.lower(),
+                FundingSettlement.funding_cycle_at == cycle,
             )
-            .order_by(FundingSnapshot.observed_at.desc())
         )
-        if snapshot is None:
-            return fallback, "current_estimate"
-        return snapshot.funding_rate, "market_snapshot"
+
+    async def _mark_pending(
+        self,
+        session: AsyncSession,
+        position: Position,
+        cycle: datetime,
+        missing: str,
+    ) -> None:
+        pending = await session.scalar(
+            select(FundingPendingCycle).where(
+                FundingPendingCycle.position_id == position.id,
+                FundingPendingCycle.cycle_at == cycle,
+            )
+        )
+        now = datetime.now(timezone.utc)
+        if pending is None:
+            session.add(
+                FundingPendingCycle(
+                    position_id=position.id,
+                    symbol=position.symbol,
+                    long_venue=position.long_venue,
+                    short_venue=position.short_venue,
+                    cycle_at=cycle,
+                    reason=f"awaiting exchange confirmation: {missing}",
+                    first_seen_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            pending.reason = f"awaiting exchange confirmation: {missing}"
+            pending.updated_at = now
 
     @staticmethod
     def _update_negative_hours(position: Position, net_apr_pct: float, now: datetime) -> None:

@@ -46,11 +46,13 @@ export function ExchangeView({ onSelectCoin }: Props) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {exchanges.map((ex) => {
           const isSelected = ex.id === selectedExchangeId;
-          const avgRate =
-            ex.markets.length > 0
-              ? ex.markets.reduce((s, m) => s + m.funding_rate, 0) / ex.markets.length
-              : 0;
-          const avgApr = avgRate * 24 * 365 * 100;
+          const confirmedRates = ex.markets
+            .map((market) => market.funding_rate)
+            .filter((rate): rate is number => rate !== null);
+          const avgRate = confirmedRates.length
+            ? confirmedRates.reduce((sum, rate) => sum + rate, 0) / confirmedRates.length
+            : null;
+          const avgApr = avgRate === null ? null : avgRate * 24 * 365 * 100;
 
           return (
             <div
@@ -74,10 +76,9 @@ export function ExchangeView({ onSelectCoin }: Props) {
                   <div className="font-mono text-xl font-bold text-slate-100">{ex.markets_count}</div>
                 </div>
                 <div className="text-right">
-                  <div className="text-[10px] uppercase text-slate-500">Avg Market APR</div>
-                  <div className={`font-mono text-sm font-semibold ${avgApr >= 0 ? "text-cyan" : "text-rose-400"}`}>
-                    {avgApr >= 0 ? "+" : ""}
-                    {avgApr.toFixed(1)}%
+                  <div className="text-[10px] uppercase text-slate-500">Avg Confirmed APR</div>
+                  <div className={`font-mono text-sm font-semibold ${avgApr === null ? "text-slate-500" : avgApr >= 0 ? "text-cyan" : "text-rose-400"}`}>
+                    {avgApr === null ? "—" : `${avgApr >= 0 ? "+" : ""}${avgApr.toFixed(1)}%`}
                   </div>
                 </div>
               </div>

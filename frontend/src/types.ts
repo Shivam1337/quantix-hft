@@ -25,6 +25,8 @@ export type Opportunity = {
   historical_3d_apr_pct?: number | null;
   historical_snapshots_count?: number;
   spread_stability_pct?: number | null;
+  funding_rate_source?: string;
+  funding_history_latest_cycle?: string | null;
 };
 
 export type Position = {
@@ -89,7 +91,6 @@ export type Settings = {
   auto_unwind: boolean;
   entry_min_history_snapshots: number;
   entry_min_spread_stability_pct: number;
-  entry_max_apr_ratio: number;
   alert_webhook_url: string | null;
 };
 
@@ -163,9 +164,11 @@ export type ThroughputSummary = {
 export type ExchangeMarket = {
   venue: string;
   symbol: string;
-  funding_rate: number;
+  funding_rate: number | null;
   funding_rate_native: number | null;
   funding_interval_hours: number;
+  funding_cycle_at: string | null;
+  funding_rate_source: string;
   mark_price: number;
   open_interest: number;
   bid: number;
@@ -182,19 +185,16 @@ export type ExchangeSummary = {
   markets: ExchangeMarket[];
 };
 
-export type FundingSnapshot = {
+export type FundingSettlement = {
   id: number;
   venue: string;
   symbol: string;
   funding_rate: number;
   funding_rate_native: number | null;
   funding_interval_hours: number;
-  funding_cycle_at: string | null;
-  mark_price: number;
-  open_interest: number;
-  bid: number;
-  ask: number;
-  observed_at: string;
+  funding_cycle_at: string;
+  settled_at: string;
+  source: string;
   created_at: string;
 };
 

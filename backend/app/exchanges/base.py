@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.domain.types import MarketSnapshotData
+from app.domain.types import FundingSettlementData, MarketSnapshotData
 
 
 class ExchangeError(RuntimeError):
@@ -29,6 +29,19 @@ class ExchangeAdapter(ABC):
     async def stream_markets(self, symbols: list[str]) -> AsyncIterator[MarketSnapshotData]:
         if False:
             yield MarketSnapshotData  # pragma: no cover
+        raise NotImplementedError
+
+    async def fetch_funding_history(
+        self,
+        symbols: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[FundingSettlementData]:
+        """Return only exchange-confirmed funding cycles.
+
+        Adapters that do not expose a confirmed history endpoint contribute no
+        rows; callers must never substitute a live market rate.
+        """
         raise NotImplementedError
 
 

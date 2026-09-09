@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.domain.calculator import CalculatorConfig, calculate_opportunities
@@ -7,40 +7,74 @@ from app.domain.fees import FeeSchedule
 from app.domain.types import MarketSnapshotData
 from app.exchanges.base import ExchangeAdapter
 from app.exchanges.service import ExchangeService
+from app.services.historical_funding import HistoricalSpreadStats
 
 
-def snapshot(venue: str, rate: float) -> MarketSnapshotData:
+def snapshot(venue: str) -> MarketSnapshotData:
     return MarketSnapshotData(
         venue=venue,
         symbol="BTC-PERP",
-        funding_rate=rate,
         mark_price=65_000,
         open_interest=1_000_000,
         bid=64_999,
         ask=65_001,
         observed_at=datetime.now(timezone.utc),
-        funding_rate_native=rate,
-        funding_interval_hours=1,
-        funding_cycle_at=datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0),
     )
+
+
+def stat(
+    long_rate: float,
+    short_rate: float,
+    long_venue: str = "lighter",
+    short_venue: str = "hyperliquid",
+    count: int = 6,
+) -> HistoricalSpreadStats:
+    latest = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    gross = short_rate - long_rate
+    return HistoricalSpreadStats(
+        long_venue=long_venue,
+        short_venue=short_venue,
+        long_avg_rate=long_rate,
+        short_avg_rate=short_rate,
+        historical_gross_hourly=gross,
+        historical_net_apr_pct=gross * 24 * 365 * 100,
+        snapshot_count=count,
+        spread_stability_pct=100,
+        oldest_cycle=latest - timedelta(hours=count - 1),
+        latest_cycle=latest,
+    )
+
+
+def confirmed_stats() -> dict:
+    rates = {"hyperliquid": 0.0008, "aevo": 0.0002, "lighter": -0.0002}
+    result = {}
+    venues = list(rates)
+    for index, first in enumerate(venues):
+        for second in venues[index + 1 :]:
+            long_venue, short_venue = sorted((first, second), key=lambda venue: rates[venue])
+            result[("BTC-PERP", long_venue, short_venue)] = stat(
+                rates[long_venue], rates[short_venue], long_venue, short_venue
+            )
+    return result
 
 
 class StreamingFixture(ExchangeAdapter):
     name = "lighter"
 
     async def fetch_markets(self, symbols: list[str]) -> list[MarketSnapshotData]:
-        return [snapshot(self.name, 0.000012)]
+        return [snapshot(self.name)]
 
     async def stream_markets(self, symbols: list[str]):
         while True:
-            yield snapshot(self.name, 0.000012)
+            yield snapshot(self.name)
             await asyncio.sleep(60)
 
 
-def test_calculator_normalizes_direction_and_fee_drag():
+def test_calculator_uses_confirmed_history_for_direction_and_fee_drag():
     values = calculate_opportunities(
-        [snapshot("hyperliquid", 0.0008), snapshot("aevo", 0.0002), snapshot("lighter", -0.0002)],
+        [snapshot("hyperliquid"), snapshot("aevo"), snapshot("lighter")],
         CalculatorConfig(),
+        confirmed_stats(),
     )
     assert len(values) == 3
     best = values[0]
@@ -50,26 +84,25 @@ def test_calculator_normalizes_direction_and_fee_drag():
     assert best.net_hourly_rate < best.gross_hourly_rate
     assert best.net_apr_pct > 0
     assert best.entry_fee_bps == 1.5
-    assert best.exit_fee_bps == 1.5
-    assert best.round_trip_fee_bps == 3.0
-    assert best.fee_breakeven_hours == 0.3
+    assert best.funding_rate_source == "confirmed_history"
 
 
-def test_calculator_does_not_create_opportunities_for_one_venue():
+def test_calculator_returns_no_opportunity_without_confirmed_history():
     assert calculate_opportunities(
-        [snapshot("hyperliquid", 0.001)], CalculatorConfig(fee_schedule=FeeSchedule(venues={}))
+        [snapshot("hyperliquid"), snapshot("lighter")], CalculatorConfig()
     ) == []
 
 
 def test_aevo_uses_standard_perpetual_taker_fee_for_market_orders():
     values = calculate_opportunities(
-        [snapshot("aevo", 0.0002), snapshot("lighter", -0.0002)], CalculatorConfig()
+        [snapshot("aevo"), snapshot("lighter")],
+        CalculatorConfig(),
+        {("BTC-PERP", "lighter", "aevo"): stat(-0.0002, 0.0002, "lighter", "aevo")},
     )
     value = values[0]
     assert value.long_venue == "lighter"
     assert value.short_venue == "aevo"
     assert value.entry_fee_bps == 8.0
-    assert value.exit_fee_bps == 8.0
     assert value.round_trip_fee_bps == 16.0
 
 
@@ -80,20 +113,21 @@ async def test_exchange_service_streams_updates_without_poll_loop():
     try:
         value = await anext(stream)
         assert value.venue == "lighter"
-        assert value.symbol == "BTC-PERP"
+        assert not hasattr(value, "funding_rate")
     finally:
         await stream.aclose()
 
 
-def test_snapshot_preserves_native_rate_and_cycle_metadata():
-    value = snapshot("lighter", 0.000012)
-    assert value.funding_rate_native == pytest.approx(0.000012)
-    assert value.funding_interval_hours == 1
-    assert value.funding_cycle_at is not None
+def test_live_snapshot_contains_only_execution_data():
+    value = snapshot("lighter")
+    assert value.mark_price > 0
+    assert value.bid > 0
+    assert value.ask > 0
+    assert not hasattr(value, "funding_rate")
 
 
 @pytest.mark.asyncio
-async def test_market_engine_uses_latest_funding_rate_within_same_cycle(tmp_path):
+async def test_market_engine_replaces_live_liquidity_snapshot(tmp_path):
     from app.cache import Cache
     from app.models import Base
     from app.services.market import MarketEngine
@@ -103,73 +137,27 @@ async def test_market_engine_uses_latest_funding_rate_within_same_cycle(tmp_path
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    cycle_time = datetime(2026, 9, 8, 16, 0, 0, tzinfo=timezone.utc)
-    snap1 = MarketSnapshotData(
-        venue="hyperliquid",
-        symbol="BTC-PERP",
-        funding_rate=0.0005,
-        mark_price=65000,
-        open_interest=1000000,
-        bid=64999,
-        ask=65001,
-        observed_at=datetime(2026, 9, 8, 16, 5, 0, tzinfo=timezone.utc),
-        funding_rate_native=0.0005,
-        funding_interval_hours=1,
-        funding_cycle_at=cycle_time,
-    )
-    snap_leg = MarketSnapshotData(
-        venue="lighter",
-        symbol="BTC-PERP",
-        funding_rate=0.0001,
-        mark_price=65010,
-        open_interest=1000000,
-        bid=65009,
-        ask=65011,
-        observed_at=datetime(2026, 9, 8, 16, 5, 0, tzinfo=timezone.utc),
-        funding_rate_native=0.0001,
-        funding_interval_hours=1,
-        funding_cycle_at=cycle_time,
-    )
     service = StreamingFixture()
     market = MarketEngine(session_factory, service, Cache(None), CalculatorConfig())
-    await market.ingest([snap1, snap_leg])
-    assert market.latest_snapshots[("hyperliquid", "BTC-PERP")].funding_rate == 0.0005
-
-    # A later tick in the same cycle must replace a stale spike while prices update.
-    snap2 = MarketSnapshotData(
-        venue="hyperliquid",
+    await market.ingest([snapshot("lighter")])
+    assert market.latest_snapshots[("lighter", "BTC-PERP")].mark_price == 65_000
+    updated = MarketSnapshotData(
+        venue="lighter",
         symbol="BTC-PERP",
-        funding_rate=0.00099,
-        mark_price=65100,
-        open_interest=1000000,
-        bid=65099,
-        ask=65101,
-        observed_at=datetime(2026, 9, 8, 16, 5, 1, tzinfo=timezone.utc),
-        funding_rate_native=0.00099,
-        funding_interval_hours=1,
-        funding_cycle_at=cycle_time,
+        mark_price=65_100,
+        open_interest=1_000_000,
+        bid=65_099,
+        ask=65_101,
+        observed_at=datetime.now(timezone.utc),
     )
-    await market.ingest([snap2])
-    hl_snap = market.latest_snapshots[("hyperliquid", "BTC-PERP")]
-    assert hl_snap.funding_rate == 0.00099
-    assert hl_snap.mark_price == 65100
-
-    # Next funding cycle (17:00): rate continues to update normally.
-    next_cycle = datetime(2026, 9, 8, 17, 0, 0, tzinfo=timezone.utc)
-    snap3 = MarketSnapshotData(
-        venue="hyperliquid",
-        symbol="BTC-PERP",
-        funding_rate=0.00075,
-        mark_price=65200,
-        open_interest=1000000,
-        bid=65199,
-        ask=65201,
-        observed_at=datetime(2026, 9, 8, 17, 0, 1, tzinfo=timezone.utc),
-        funding_rate_native=0.00075,
-        funding_interval_hours=1,
-        funding_cycle_at=next_cycle,
-    )
-    await market.ingest([snap3])
-    assert market.latest_snapshots[("hyperliquid", "BTC-PERP")].funding_rate == 0.00075
+    await market.ingest([updated])
+    assert market.latest_snapshots[("lighter", "BTC-PERP")].mark_price == 65_100
     await engine.dispose()
+
+
+def test_calculator_does_not_create_opportunities_for_one_venue():
+    assert calculate_opportunities(
+        [snapshot("hyperliquid")],
+        CalculatorConfig(fee_schedule=FeeSchedule(venues={"hyperliquid": {}})),
+        {},
+    ) == []

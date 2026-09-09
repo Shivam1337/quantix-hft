@@ -1,7 +1,5 @@
 from fastapi import APIRouter, Request
-from sqlalchemy import select
 
-from app.models import FundingSnapshot
 from app.schemas import ExchangeMarketRead, ExchangeSummaryRead
 
 router = APIRouter(prefix="/api/v1/exchanges", tags=["exchanges"])
@@ -32,6 +30,12 @@ async def list_exchanges(request: Request) -> list[ExchangeSummaryRead]:
         except Exception:
             pass
 
+    settlements = await market.historical_service.list_settlements(limit=10_000)
+    latest_settlement = {}
+    for settlement in settlements:
+        key = (settlement.venue.lower(), settlement.symbol.upper())
+        latest_settlement.setdefault(key, settlement)
+
     results: list[ExchangeSummaryRead] = []
     for venue in venues:
         venue_symbols = sorted(
@@ -41,13 +45,22 @@ async def list_exchanges(request: Request) -> list[ExchangeSummaryRead]:
         for symbol in venue_symbols:
             snap = market.latest_snapshots.get((venue, symbol))
             if snap:
+                settlement = latest_settlement.get((venue, symbol.upper()))
                 adapter_markets.append(
                     ExchangeMarketRead(
                         venue=snap.venue,
                         symbol=snap.symbol,
-                        funding_rate=snap.funding_rate,
-                        funding_rate_native=snap.funding_rate_native,
-                        funding_interval_hours=snap.funding_interval_hours,
+                        funding_rate=settlement.funding_rate if settlement else None,
+                        funding_rate_native=(
+                            settlement.funding_rate_native if settlement else None
+                        ),
+                        funding_interval_hours=(
+                            settlement.funding_interval_hours if settlement else 1.0
+                        ),
+                        funding_cycle_at=settlement.funding_cycle_at if settlement else None,
+                        funding_rate_source=(
+                            "confirmed_history" if settlement else "unavailable"
+                        ),
                         mark_price=snap.mark_price,
                         open_interest=snap.open_interest,
                         bid=snap.bid,
@@ -55,18 +68,6 @@ async def list_exchanges(request: Request) -> list[ExchangeSummaryRead]:
                         observed_at=snap.observed_at,
                     )
                 )
-
-        if not adapter_markets:
-            async with request.app.state.session_factory() as session:
-                for symbol in venue_symbols:
-                    snap_model = await session.scalar(
-                        select(FundingSnapshot)
-                        .where(FundingSnapshot.venue == venue, FundingSnapshot.symbol == symbol)
-                        .order_by(FundingSnapshot.observed_at.desc())
-                        .limit(1)
-                    )
-                    if snap_model:
-                        adapter_markets.append(ExchangeMarketRead.model_validate(snap_model))
 
         results.append(
             ExchangeSummaryRead(

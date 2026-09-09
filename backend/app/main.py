@@ -66,6 +66,7 @@ def create_app(
         CalculatorConfig(
             fee_schedule=fee_schedule,
             capacity_fraction=settings.capacity_fraction,
+            min_history_cycles=settings.entry_min_history_snapshots,
         ),
     )
     positions = PositionService(

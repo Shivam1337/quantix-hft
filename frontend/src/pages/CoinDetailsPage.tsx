@@ -3,7 +3,7 @@ import { getExchanges, getFundingHistory, getOpportunities } from "../api";
 import { CoinCrossExchangeView } from "../components/CoinCrossExchangeView";
 import { FundingHistoryChart } from "../components/FundingHistoryChart";
 import { MetricCard } from "../components/MetricCard";
-import type { ExchangeMarket, ExchangeSummary, FundingSnapshot, Opportunity } from "../types";
+import type { ExchangeMarket, ExchangeSummary, FundingSettlement, Opportunity } from "../types";
 
 type Props = {
   venue: string;
@@ -16,7 +16,7 @@ type Props = {
 
 export function CoinDetailsPage({ venue, symbol, onBack, onSelectSimulate, onExecute }: Props) {
   const [market, setMarket] = useState<ExchangeMarket | null>(null);
-  const [history, setHistory] = useState<FundingSnapshot[]>([]);
+  const [history, setHistory] = useState<FundingSettlement[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeSummary[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [selectedVenue, setSelectedVenue] = useState(venue || "hyperliquid");
@@ -56,10 +56,10 @@ export function CoinDetailsPage({ venue, symbol, onBack, onSelectSimulate, onExe
     };
   }, [venueId, coinSymbol]);
 
-  const latestRate = market?.funding_rate ?? (history[0]?.funding_rate ?? 0);
-  const latestPrice = market?.mark_price ?? (history[0]?.mark_price ?? 0);
-  const latestOi = market?.open_interest ?? (history[0]?.open_interest ?? 0);
-  const apr = latestRate * 24 * 365 * 100;
+  const latestRate = market?.funding_rate ?? history[0]?.funding_rate ?? null;
+  const latestPrice = market?.mark_price ?? 0;
+  const latestOi = market?.open_interest ?? 0;
+  const apr = latestRate === null ? null : latestRate * 24 * 365 * 100;
   const venueTitle = venueId.charAt(0).toUpperCase() + venueId.slice(1);
 
   return (
@@ -124,8 +124,8 @@ export function CoinDetailsPage({ venue, symbol, onBack, onSelectSimulate, onExe
 
               <div className="text-right">
                 <p className="text-[10px] uppercase text-slate-500 font-medium">Annualized APR</p>
-                <p className={`font-mono text-2xl font-bold ${apr >= 0 ? "text-cyan" : "text-rose-400"}`}>
-                  {apr >= 0 ? "+" : ""}{apr.toFixed(2)}%
+                <p className={`font-mono text-2xl font-bold ${apr === null ? "text-slate-500" : apr >= 0 ? "text-cyan" : "text-rose-400"}`}>
+                  {apr === null ? "—" : `${apr >= 0 ? "+" : ""}${apr.toFixed(2)}%`}
                 </p>
               </div>
             </div>
@@ -138,10 +138,10 @@ export function CoinDetailsPage({ venue, symbol, onBack, onSelectSimulate, onExe
                 accent="white"
               />
               <MetricCard
-                label="Hourly Funding"
-                value={`${latestRate >= 0 ? "+" : ""}${(latestRate * 100).toFixed(4)}%`}
-                detail="current settlement rate"
-                accent={latestRate >= 0 ? "cyan" : "amber"}
+                label="Confirmed Funding"
+                value={latestRate === null ? "—" : `${latestRate >= 0 ? "+" : ""}${(latestRate * 100).toFixed(4)}%`}
+                detail="latest exchange settlement"
+                accent={latestRate === null ? "white" : latestRate >= 0 ? "cyan" : "amber"}
               />
               <MetricCard
                 label="Open Interest"
@@ -150,8 +150,8 @@ export function CoinDetailsPage({ venue, symbol, onBack, onSelectSimulate, onExe
               />
               <MetricCard
                 label="Interval Window"
-                value={`${market?.funding_interval_hours ?? 1} Hour`}
-                detail="fixed funding cycle"
+                value={market?.funding_rate === null || market?.funding_rate === undefined ? "—" : `${market.funding_interval_hours} Hour`}
+                detail="confirmed settlement window"
                 accent="white"
               />
             </div>
@@ -173,15 +173,7 @@ export function CoinDetailsPage({ venue, symbol, onBack, onSelectSimulate, onExe
                 <div className="max-h-80 overflow-y-auto">
                   <table>
                     <thead className="sticky top-0 bg-slate-900">
-                      <tr>
-                        <th>Occurred At / Cycle (UTC)</th>
-                        <th>Funding Rate / h</th>
-                        <th>Cycle Window</th>
-                        <th>Mark Price</th>
-                        <th>Bid / Ask</th>
-                        <th>Open Interest</th>
-                        <th>Last Observed</th>
-                      </tr>
+                      <tr><th>Funding Cycle (UTC)</th><th>Confirmed Rate / h</th><th>Cycle Window</th><th>Settled At</th><th>Source</th></tr>
                     </thead>
                     <tbody>
                       {history.map((rec) => (
@@ -189,21 +181,19 @@ export function CoinDetailsPage({ venue, symbol, onBack, onSelectSimulate, onExe
                           <td className="font-mono font-medium text-white">
                             {rec.funding_cycle_at
                               ? new Date(rec.funding_cycle_at).toLocaleString()
-                              : new Date(rec.observed_at).toLocaleString()}
+                            : new Date(rec.settled_at).toLocaleString()}
                           </td>
                           <td className={`font-mono font-medium ${rec.funding_rate >= 0 ? "text-emerald-300" : "text-rose-400"}`}>
                             {(rec.funding_rate * 100).toFixed(4)}%
                           </td>
                           <td><span className="tag receive">{rec.funding_interval_hours}h</span></td>
-                          <td className="font-mono text-slate-200">${rec.mark_price.toLocaleString()}</td>
-                          <td className="font-mono text-xs text-slate-400">${rec.bid.toFixed(1)} / ${rec.ask.toFixed(1)}</td>
-                          <td className="font-mono text-slate-300">${rec.open_interest.toLocaleString()}</td>
-                          <td className="font-mono text-xs text-slate-400">{new Date(rec.observed_at).toLocaleTimeString()}</td>
+                          <td className="font-mono text-xs text-slate-400">{new Date(rec.settled_at).toLocaleString()}</td>
+                          <td className="font-mono text-xs text-slate-400">{rec.source}</td>
                         </tr>
                       ))}
                       {!history.length && (
                         <tr>
-                          <td colSpan={7} className="empty-state">No historical snapshots found in database yet.</td>
+                          <td colSpan={5} className="empty-state">No exchange-confirmed settlements found yet.</td>
                         </tr>
                       )}
                     </tbody>

@@ -77,11 +77,11 @@ class PositionService:
             entry_historical_apr_pct=opportunity.historical_3d_apr_pct,
             entry_long_funding_rate=opportunity.long_funding_rate,
             entry_short_funding_rate=opportunity.short_funding_rate,
-            entry_rate_observed_at=opportunity.observed_at,
+            entry_rate_observed_at=opportunity.funding_history_latest_cycle,
             last_net_apr_pct=opportunity.net_apr_pct,
             last_long_funding_rate=opportunity.long_funding_rate,
             last_short_funding_rate=opportunity.short_funding_rate,
-            last_rate_observed_at=opportunity.observed_at,
+            last_rate_observed_at=opportunity.funding_history_latest_cycle,
         )
         async with self.session_factory() as session:
             session.add(position)
@@ -149,6 +149,10 @@ class PositionService:
         async with self.session_factory() as session:
             stmt = (
                 select(FundingPayment)
+                .where(
+                    FundingPayment.rate_source == "exchange_history",
+                    FundingPayment.settlement_type == "confirmed",
+                )
                 .order_by(FundingPayment.cycle_at.desc(), FundingPayment.id.desc())
                 .limit(limit)
             )

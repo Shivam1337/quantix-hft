@@ -8,14 +8,16 @@ class Base(DeclarativeBase):
     pass
 
 
-class FundingSnapshot(Base):
-    __tablename__ = "funding_snapshots"
+class FundingSettlement(Base):
+    """Immutable rate returned by an exchange-confirmed history endpoint."""
+
+    __tablename__ = "funding_settlements"
     __table_args__ = (
         UniqueConstraint(
             "venue",
             "symbol",
             "funding_cycle_at",
-            name="uq_funding_snapshot_venue_symbol_cycle",
+            name="uq_funding_settlement_venue_symbol_cycle",
         ),
     )
 
@@ -25,14 +27,11 @@ class FundingSnapshot(Base):
     funding_rate: Mapped[float] = mapped_column(Float)
     funding_rate_native: Mapped[float | None] = mapped_column(Float, nullable=True)
     funding_interval_hours: Mapped[float] = mapped_column(Float, default=1.0)
-    funding_cycle_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
+    funding_cycle_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
     )
-    mark_price: Mapped[float] = mapped_column(Float)
-    open_interest: Mapped[float] = mapped_column(Float)
-    bid: Mapped[float] = mapped_column(Float)
-    ask: Mapped[float] = mapped_column(Float)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    settled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    source: Mapped[str] = mapped_column(String(64), default="exchange_history")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -123,7 +122,6 @@ class SystemSetting(Base):
     auto_unwind: Mapped[bool] = mapped_column(default=True)
     entry_min_history_snapshots: Mapped[int] = mapped_column(Integer, default=6)
     entry_min_spread_stability_pct: Mapped[float] = mapped_column(Float, default=60)
-    entry_max_apr_ratio: Mapped[float] = mapped_column(Float, default=2)
     alert_webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -165,6 +163,29 @@ class FundingPayment(Base):
     short_payment_usd: Mapped[float] = mapped_column(Float)
     net_payment_usd: Mapped[float] = mapped_column(Float)
     cycle_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    settlement_type: Mapped[str] = mapped_column(String(24), default="simulated")
-    rate_source: Mapped[str] = mapped_column(String(32), default="market_snapshot")
+    settlement_type: Mapped[str] = mapped_column(String(24), default="confirmed")
+    rate_source: Mapped[str] = mapped_column(String(32), default="exchange_history")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FundingPendingCycle(Base):
+    """A cycle that has not yet been confirmed by one or both exchanges."""
+
+    __tablename__ = "funding_pending_cycles"
+    __table_args__ = (
+        UniqueConstraint(
+            "position_id",
+            "cycle_at",
+            name="uq_funding_pending_position_cycle",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position_id: Mapped[str] = mapped_column(String(36), index=True)
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
+    long_venue: Mapped[str] = mapped_column(String(32))
+    short_venue: Mapped[str] = mapped_column(String(32))
+    cycle_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    reason: Mapped[str] = mapped_column(String(128), default="awaiting exchange confirmation")
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

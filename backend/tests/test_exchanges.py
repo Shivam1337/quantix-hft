@@ -21,7 +21,13 @@ class AevoFixtureAdapter(AevoAdapter):
                 "best_bid": {"price": "64999"},
                 "best_ask": {"price": "65001"},
             }
-        return {"funding_rate": "0.000012", "next_epoch": "1788861600000000000"}
+        if path == "/funding-history":
+            return {
+                "funding_history": [
+                    ["BTC-PERP", "1788861600000000000", "0.000012", "10"]
+                ]
+            }
+        return {}
 
 
 class AevoRateLimitFixtureAdapter(AevoAdapter):
@@ -69,24 +75,22 @@ class LighterFixtureAdapter(LighterAdapter):
 
 
 @pytest.mark.asyncio
-async def test_aevo_fetch_uses_real_instrument_and_hourly_funding_fields():
+async def test_aevo_fetch_uses_real_instrument_without_live_funding_fields():
     value = (await AevoFixtureAdapter().fetch_markets(["BTC-PERP"]))[0]
-    assert value.funding_rate == pytest.approx(0.000012)
-    assert value.funding_rate_native == pytest.approx(0.000012)
+    assert not hasattr(value, "funding_rate")
     assert value.open_interest == pytest.approx(1_300_000)
     assert value.bid == 64_999
     assert value.ask == 65_001
-    assert value.funding_interval_hours == 1
 
 
 @pytest.mark.asyncio
-async def test_aevo_rate_limit_sets_cooldown_and_prevents_retry_storm():
+async def test_aevo_market_fetch_does_not_call_live_funding_endpoint():
     adapter = AevoRateLimitFixtureAdapter()
 
-    assert await adapter.fetch_markets(["BTC-PERP"]) == []
-    assert await adapter.fetch_markets(["BTC-PERP"]) == []
+    assert await adapter.fetch_markets(["BTC-PERP"])
+    assert await adapter.fetch_markets(["BTC-PERP"])
 
-    assert adapter.calls == ["/instrument/BTC-PERP", "/funding"]
+    assert adapter.calls == ["/instrument/BTC-PERP"]
 
 
 @pytest.mark.asyncio
@@ -118,13 +122,11 @@ async def test_http_rate_limit_honors_retry_after_and_records_once():
 @pytest.mark.asyncio
 async def test_lighter_percent_rate_is_normalized_to_hourly_decimal():
     value = (await LighterFixtureAdapter().fetch_markets(["BTC-PERP"]))[0]
-    assert value.funding_rate_native == pytest.approx(0.0012)
-    assert value.funding_rate == pytest.approx(0.000012)
-    assert value.funding_cycle_at == datetime.fromtimestamp(1788861600, timezone.utc)
+    assert not hasattr(value, "funding_rate")
     assert value.open_interest == pytest.approx(1_300_000)
 
 
-def test_lighter_market_stats_stream_preserves_native_percent_rate():
+def test_lighter_market_stats_stream_contains_only_market_data():
     value = LighterAdapter()._stream_snapshot(
         {
             "symbol": "BTC",
@@ -139,5 +141,27 @@ def test_lighter_market_stats_stream_preserves_native_percent_rate():
         1788861600000,
     )
     assert value is not None
-    assert value.funding_rate == pytest.approx(0.000012)
-    assert value.funding_rate_native == pytest.approx(0.0012)
+    assert not hasattr(value, "funding_rate")
+
+
+@pytest.mark.asyncio
+async def test_adapters_parse_official_confirmed_history():
+    aevo = AevoFixtureAdapter()
+    aevo_rows = await aevo.fetch_funding_history(
+        ["BTC-PERP"],
+        datetime.fromtimestamp(1788860000, timezone.utc),
+        datetime.fromtimestamp(1788870000, timezone.utc),
+    )
+    assert len(aevo_rows) == 1
+    assert aevo_rows[0].funding_rate == pytest.approx(0.000012)
+    assert aevo_rows[0].source == "aevo_funding_history"
+
+    lighter = LighterFixtureAdapter()
+    lighter_rows = await lighter.fetch_funding_history(
+        ["BTC-PERP"],
+        datetime.fromtimestamp(1788860000, timezone.utc),
+        datetime.fromtimestamp(1788870000, timezone.utc),
+    )
+    assert len(lighter_rows) == 1
+    assert lighter_rows[0].funding_rate == pytest.approx(0.000012)
+    assert lighter_rows[0].source == "lighter_funding_history"

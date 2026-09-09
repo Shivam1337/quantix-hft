@@ -60,6 +60,18 @@ class FundingPaymentRead(ReadModel):
     short_rate: float
     short_payment_usd: float
     net_payment_usd: float
-    settlement_type: str = "simulated"
-    rate_source: str = "market_snapshot"
+    settlement_type: str = "confirmed"
+    rate_source: str = "exchange_history"
     created_at: datetime
+
+
+class FundingPendingCycleRead(ReadModel):
+    id: int
+    position_id: str
+    symbol: str
+    cycle_at: datetime
+    long_venue: str
+    short_venue: str
+    reason: str
+    first_seen_at: datetime
+    updated_at: datetime

@@ -37,7 +37,13 @@ async def diagnose_postgres(request: Request) -> PostgresDiagnosticsRead:
             if version_row:
                 version_str = str(version_row[0])
 
-            for tbl in ("funding_snapshots", "positions", "trade_logs", "system_settings"):
+            for tbl in (
+                "funding_settlements",
+                "funding_pending_cycles",
+                "positions",
+                "trade_logs",
+                "system_settings",
+            ):
                 try:
                     c_res = await session.execute(text(f"SELECT count(*) FROM {tbl}"))
                     row = c_res.first()

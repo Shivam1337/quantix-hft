@@ -25,10 +25,10 @@ export function OpportunityRadar(props: Props) {
     <section className="panel col-span-12 overflow-hidden lg:col-span-8">
       <div className="section-heading">
         <div>
-          <p className="eyebrow text-cyan">Live opportunity radar</p>
+          <p className="eyebrow text-cyan">Confirmed-history opportunity radar</p>
           <h2>Funding spread matrix</h2>
         </div>
-        <span className="status-dot">Streaming</span>
+          <span className="status-dot">Liquidity streaming</span>
       </div>
       <div className="grid gap-3 border-b border-slate-800 p-4 md:grid-cols-3">
         <label className="field-label">Min APR %<input className="field" type="number" value={props.minApr} onChange={(e) => props.onMinAprChange(e.target.value)} /></label>
@@ -37,7 +37,7 @@ export function OpportunityRadar(props: Props) {
       </div>
       <div className="overflow-x-auto">
         <table>
-          <thead><tr><th>Market / legs</th><th>Net APR</th><th>3D History</th><th>Funding / h</th><th>Basis</th><th>Open + close fees</th><th>Capacity</th><th /></tr></thead>
+          <thead><tr><th>Market / legs</th><th>Confirmed Net APR</th><th>Aligned History</th><th>Confirmed Funding / h</th><th>Basis</th><th>Open + close fees</th><th>Capacity</th><th /></tr></thead>
           <tbody>
             {sortedItems.map((item) => <tr key={item.id}>
               <td><strong>{item.symbol}</strong><span className="subline"><span className="tag receive">L {venue(item.long_venue)}</span><span className="tag pay">S {venue(item.short_venue)}</span></span></td>
@@ -53,7 +53,7 @@ export function OpportunityRadar(props: Props) {
                     </span>
                   </div>
                 ) : (
-                  <span className="text-xs text-slate-500">Spot only</span>
+                    <span className="text-xs text-slate-500">Awaiting confirmed history</span>
                 )}
               </td>
               <td><span className="text-emerald-300">{rate(item.long_funding_rate)}</span><span className="text-slate-500"> → </span><span className="text-rose-300">{rate(item.short_funding_rate)}</span></td>

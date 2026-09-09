@@ -13,7 +13,6 @@ export function SettingsPanel({ settings, onSave, theme = "system", onThemeChang
   const [basis, setBasis] = useState("");
   const [history, setHistory] = useState("");
   const [stability, setStability] = useState("");
-  const [aprRatio, setAprRatio] = useState("");
   const [auto, setAuto] = useState<boolean | null>(null);
 
   if (!settings) {
@@ -31,7 +30,6 @@ export function SettingsPanel({ settings, onSave, theme = "system", onThemeChang
       basis_threshold_bps: basis ? Number(basis) : settings.basis_threshold_bps,
       entry_min_history_snapshots: history ? Number(history) : settings.entry_min_history_snapshots,
       entry_min_spread_stability_pct: stability ? Number(stability) : settings.entry_min_spread_stability_pct,
-      entry_max_apr_ratio: aprRatio ? Number(aprRatio) : settings.entry_max_apr_ratio,
       auto_unwind: auto ?? settings.auto_unwind,
     });
 
@@ -117,7 +115,7 @@ export function SettingsPanel({ settings, onSave, theme = "system", onThemeChang
               />
             </label>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="field-label">
               Minimum history snapshots
               <input
@@ -137,17 +135,6 @@ export function SettingsPanel({ settings, onSave, theme = "system", onThemeChang
                 max="100"
                 value={stability || settings.entry_min_spread_stability_pct}
                 onChange={(e) => setStability(e.target.value)}
-              />
-            </label>
-            <label className="field-label">
-              Max current/history APR ratio
-              <input
-                className="field"
-                type="number"
-                min="1.01"
-                step="0.1"
-                value={aprRatio || settings.entry_max_apr_ratio}
-                onChange={(e) => setAprRatio(e.target.value)}
               />
             </label>
           </div>

@@ -28,11 +28,6 @@ async def initialize_database(engine: AsyncEngine) -> None:
 
 def _add_fee_columns(connection) -> None:
     additions = {
-        "funding_snapshots": {
-            "funding_rate_native": "FLOAT",
-            "funding_interval_hours": "FLOAT DEFAULT 1",
-            "funding_cycle_at": "TIMESTAMP NULL",
-        },
         "positions": {
             "entry_fee_usd": "FLOAT DEFAULT 0",
             "exit_fee_usd": "FLOAT DEFAULT 0",
@@ -70,11 +65,13 @@ def _add_fee_columns(connection) -> None:
         "system_settings": {
             "entry_min_history_snapshots": "INTEGER DEFAULT 6",
             "entry_min_spread_stability_pct": "FLOAT DEFAULT 60",
-            "entry_max_apr_ratio": "FLOAT DEFAULT 2",
         },
         "funding_payments": {
-            "settlement_type": "VARCHAR(24) DEFAULT 'simulated'",
-            "rate_source": "VARCHAR(32) DEFAULT 'market_snapshot'",
+            # A pre-policy row has no proof of exchange confirmation. Quarantine
+            # it when these provenance columns are introduced instead of giving
+            # it the strict current-row defaults used by fresh databases.
+            "settlement_type": "VARCHAR(24) DEFAULT 'legacy_unconfirmed'",
+            "rate_source": "VARCHAR(32) DEFAULT 'legacy_unconfirmed'",
         },
     }
     inspector = inspect(connection)
@@ -88,14 +85,18 @@ def _add_fee_columns(connection) -> None:
         text(
             "UPDATE positions SET settled_long_funding_pnl_usd = COALESCE("
             "(SELECT SUM(long_payment_usd) FROM funding_payments "
-            "WHERE funding_payments.position_id = positions.id), 0)"
+            "WHERE funding_payments.position_id = positions.id "
+            "AND funding_payments.rate_source = 'exchange_history' "
+            "AND funding_payments.settlement_type = 'confirmed'), 0)"
         )
     )
     connection.execute(
         text(
             "UPDATE positions SET settled_short_funding_pnl_usd = COALESCE("
             "(SELECT SUM(short_payment_usd) FROM funding_payments "
-            "WHERE funding_payments.position_id = positions.id), 0)"
+            "WHERE funding_payments.position_id = positions.id "
+            "AND funding_payments.rate_source = 'exchange_history' "
+            "AND funding_payments.settlement_type = 'confirmed'), 0)"
         )
     )
     connection.execute(
@@ -107,11 +108,27 @@ def _add_fee_columns(connection) -> None:
     )
     connection.execute(
         text(
-            "UPDATE positions SET accrued_long_funding_pnl_usd = "
-            "COALESCE(long_funding_pnl_usd, 0) - COALESCE(settled_long_funding_pnl_usd, 0), "
-            "accrued_short_funding_pnl_usd = COALESCE(short_funding_pnl_usd, 0) - "
-            "COALESCE(settled_short_funding_pnl_usd, 0), accrued_funding_pnl_usd = "
-            "COALESCE(funding_pnl_usd, 0) - COALESCE(settled_funding_pnl_usd, 0)"
+            "UPDATE positions SET long_funding_pnl_usd = "
+            "COALESCE(settled_long_funding_pnl_usd, 0), "
+            "short_funding_pnl_usd = COALESCE(settled_short_funding_pnl_usd, 0), "
+            "funding_pnl_usd = COALESCE(settled_funding_pnl_usd, 0)"
+        )
+    )
+    connection.execute(
+        text(
+            "UPDATE positions SET accrued_long_funding_pnl_usd = 0, "
+            "accrued_short_funding_pnl_usd = 0, accrued_funding_pnl_usd = 0"
+        )
+    )
+    connection.execute(
+        text(
+            "UPDATE simulation_account SET total_realized_pnl = COALESCE(("
+            "SELECT SUM(funding_pnl_usd + basis_pnl_usd - fees_usd) FROM positions "
+            "WHERE status = 'closed'), 0), current_balance = initial_balance + "
+            "COALESCE((SELECT SUM(funding_pnl_usd + basis_pnl_usd - fees_usd) "
+            "FROM positions WHERE status = 'closed'), 0), allocated_balance = "
+            "COALESCE((SELECT SUM(2 * COALESCE(leg_size_usd, size_usd)) FROM positions "
+            "WHERE status = 'open'), 0)"
         )
     )
 

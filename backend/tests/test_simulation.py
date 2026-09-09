@@ -1,8 +1,7 @@
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
 
 import pytest
-from app.models import FundingSnapshot, Position
+from app.models import Position
 
 
 @pytest.mark.asyncio
@@ -53,32 +52,7 @@ async def test_autonomous_simulation_sizing_and_reasoning(client):
     opportunities = await app.state.market.list_opportunities()
     assert len(opportunities) > 0
 
-    # Autonomous entry waits for three samples per leg instead of trusting one spike.
-    best = opportunities[0]
-    now = datetime.now(timezone.utc)
-    async with app.state.session_factory() as session:
-        for hours_ago in (1, 2, 3):
-            observed_at = now - timedelta(hours=hours_ago)
-            for venue, rate in (
-                (best.long_venue, best.long_funding_rate),
-                (best.short_venue, best.short_funding_rate),
-            ):
-                session.add(
-                    FundingSnapshot(
-                        venue=venue,
-                        symbol=best.symbol,
-                        funding_rate=rate,
-                        mark_price=best.long_mark_price,
-                        open_interest=20_000_000,
-                        bid=best.long_mark_price,
-                        ask=best.long_mark_price,
-                        observed_at=observed_at,
-                        funding_cycle_at=observed_at.replace(
-                            minute=0, second=0, microsecond=0
-                        ),
-                    )
-                )
-        await session.commit()
+    # Autonomous entry uses the fixture's exchange-confirmed cycles.
     opportunities = await app.state.market.refresh()
 
     # Trigger autonomous trade
@@ -148,39 +122,7 @@ async def test_risk_closure_reconciles_paper_account(client):
 @pytest.mark.asyncio
 async def test_3day_historical_funding_consideration(client):
     app = client._transport.app
-    now = datetime.now(timezone.utc)
-    
-    # Seed historical snapshots over 3 days
-    async with app.state.session_factory() as session:
-        for day in range(3):
-            obs = now - timedelta(days=day, hours=1)
-            session.add(
-                FundingSnapshot(
-                    venue="hyperliquid",
-                    symbol="BTC-PERP",
-                    funding_rate=0.0005,
-                    mark_price=65000,
-                    open_interest=20_000_000,
-                    bid=64990,
-                    ask=65010,
-                    observed_at=obs,
-                )
-            )
-            session.add(
-                FundingSnapshot(
-                    venue="lighter",
-                    symbol="BTC-PERP",
-                    funding_rate=0.0001,
-                    mark_price=65000,
-                    open_interest=20_000_000,
-                    bid=64990,
-                    ask=65010,
-                    observed_at=obs,
-                )
-            )
-        await session.commit()
-
-    # Ingest and verify historical fields are calculated
+    # Confirmed settlement history is separate from live market snapshots.
     opps = await app.state.market.refresh()
     btc_opp = next((o for o in opps if o.symbol == "BTC-PERP"), None)
     assert btc_opp is not None

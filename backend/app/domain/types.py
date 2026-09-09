@@ -6,15 +6,25 @@ from datetime import datetime
 class MarketSnapshotData:
     venue: str
     symbol: str
-    funding_rate: float
     mark_price: float
     open_interest: float
     bid: float
     ask: float
     observed_at: datetime
-    funding_rate_native: float | None = None
-    funding_interval_hours: float = 1.0
-    funding_cycle_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class FundingSettlementData:
+    """A funding rate returned by an exchange's confirmed history endpoint."""
+
+    venue: str
+    symbol: str
+    funding_rate: float
+    funding_rate_native: float | None
+    funding_interval_hours: float
+    funding_cycle_at: datetime
+    settled_at: datetime
+    source: str = "exchange_history"
 
 
 @dataclass(frozen=True)
@@ -44,6 +54,8 @@ class OpportunityData:
     historical_3d_apr_pct: float | None = None
     historical_snapshots_count: int = 0
     spread_stability_pct: float | None = None
+    funding_rate_source: str = "confirmed_history"
+    funding_history_latest_cycle: datetime | None = None
 
 
 @dataclass(frozen=True)

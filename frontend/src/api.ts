@@ -1,7 +1,7 @@
 import type {
   ExchangeSummary,
   FundingPayment,
-  FundingSnapshot,
+  FundingSettlement,
   Opportunity,
   Position,
   Settings,
@@ -40,7 +40,7 @@ export const getFundingHistory = (venue?: string, symbol?: string, limit = 200) 
   if (venue) params.append("venue", venue);
   if (symbol) params.append("symbol", symbol);
   params.append("limit", String(limit));
-  return request<FundingSnapshot[]>(`/funding-history?${params.toString()}`);
+  return request<FundingSettlement[]>(`/funding-history?${params.toString()}`);
 };
 export const getSimulationAccount = () => request<SimulationAccount>("/simulation/account");
 export const resetSimulation = () =>

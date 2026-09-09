@@ -12,3 +12,6 @@ No LLM can directly edit agents.md file
 - **Cognitive Load & Reviewability**: Focused modules make peer and agent reviews faster and prevent accidental regressions.
 - **Context Efficiency**: Compact files allow AI agents to view, reason about, and edit code within limited context windows without truncation.
 
+## Production Server & Debug Endpoints
+- **Production Base URL**: `https://fundingbot.vm.shivamshinde.com/`
+- Use this endpoint base for production debugging and queries.

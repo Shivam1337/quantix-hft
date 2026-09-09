@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
 class ReadModel(BaseModel):
@@ -192,3 +192,34 @@ class SimulationResetResponse(BaseModel):
     status: str
     message: str
     account: SimulationAccountRead
+
+
+class WalletImportRequest(BaseModel):
+    private_key: SecretStr
+
+
+class WalletAssetRead(BaseModel):
+    symbol: str
+    total: float
+    available: float | None = None
+    locked: float | None = None
+
+
+class WalletBalanceRead(BaseModel):
+    exchange_id: str
+    exchange_name: str
+    status: str
+    total_usd: float | None = None
+    available_usd: float | None = None
+    assets: list[WalletAssetRead] = []
+    message: str | None = None
+
+
+class WalletRead(BaseModel):
+    connected: bool
+    address: str | None = None
+    imported_at: datetime | None = None
+    refreshed_at: datetime | None = None
+    balances: list[WalletBalanceRead]
+    live_trading_enabled: bool
+    message: str | None = None

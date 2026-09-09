@@ -46,7 +46,10 @@ The core API includes:
 - `POST /api/v1/positions/open` and `POST /api/v1/positions/{id}/close` for paper paired execution.
 - `POST /api/v1/simulator` for projected hourly cashflow, fees, and return.
 - `GET/PATCH /api/v1/settings` for APR, open-interest, basis, webhook, and auto-unwind controls.
+- `GET/POST/DELETE /api/v1/wallet` for a process-memory-only wallet import, read-only balance refresh, and removal.
 - `GET /api/v1/positions`, `GET /api/v1/logs`, and `GET /api/v1/health`.
+
+The Settings page can import an Ethereum private key and derive its public address. Hyperliquid and Lighter balances are queried without sending the private key to either exchange; Aevo is shown as requiring its own API credentials. The key is never stored in the database or returned by the API, and the wallet panel does not sign or submit orders. Use this only on a trusted local deployment. `LIVE_TRADING_ENABLED=false` remains the default.
 
 Risk checks count negative funding by UTC funding hour. A basis breach closes immediately when auto-unwind is enabled; a negative net APR for two consecutive funding hours also closes and records an alert.
 

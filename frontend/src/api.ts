@@ -10,6 +10,7 @@ import type {
   SystemMetrics,
   ThroughputSummary,
   TradeLog,
+  WalletSnapshot,
 } from "./types";
 
 const base = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
@@ -34,6 +35,14 @@ export const getLogs = () => request<TradeLog[]>("/logs?limit=50");
 export const getFundingPayments = (limit = 100) => request<FundingPayment[]>(`/funding-payments?limit=${limit}`);
 export const getSystemMetrics = () => request<SystemMetrics>("/system/metrics");
 export const getExchanges = () => request<ExchangeSummary[]>("/exchanges");
+export const getWallet = () => request<WalletSnapshot>("/wallet");
+export const importWallet = (privateKey: string) =>
+  request<WalletSnapshot>("/wallet/import", {
+    method: "POST",
+    body: JSON.stringify({ private_key: privateKey }),
+  });
+export const refreshWallet = () => request<WalletSnapshot>("/wallet/refresh", { method: "POST" });
+export const removeWallet = () => request<WalletSnapshot>("/wallet", { method: "DELETE" });
 export const getThroughput = () => request<ThroughputSummary>("/telemetry/websocket-throughput");
 export const getFundingHistory = (venue?: string, symbol?: string, limit = 200) => {
   const params = new URLSearchParams();

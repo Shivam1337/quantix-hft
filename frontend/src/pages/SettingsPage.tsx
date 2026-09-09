@@ -1,4 +1,5 @@
 import { SettingsPanel } from "../components/SettingsPanel";
+import { WalletPanel } from "../components/WalletPanel";
 import type { Settings, ThemeMode } from "../types";
 
 type Props = {
@@ -17,6 +18,7 @@ export function SettingsPage(p: Props) {
         theme={p.theme}
         onThemeChange={p.onThemeChange}
       />
+      <WalletPanel />
     </div>
   );
 }

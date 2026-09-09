@@ -11,6 +11,7 @@ from app.api.funding import funding_router
 from app.api.routes import router
 from app.api.system import router as system_router
 from app.api.telemetry_router import router as telemetry_router
+from app.api.wallet import router as wallet_router
 from app.api.websocket import ConnectionManager, serve_market_socket
 from app.cache import Cache
 from app.config import Settings, get_settings
@@ -26,6 +27,7 @@ from app.services.orchestrator import Orchestrator
 from app.services.positions import PositionService
 from app.services.settings import SettingsService
 from app.services.simulation import SimulationService
+from app.services.wallet import WalletService
 
 logging.basicConfig(level=logging.INFO)
 
@@ -48,6 +50,7 @@ async def relay_market_updates(
 def create_app(
     app_settings: Settings | None = None,
     exchange_service: ExchangeService | None = None,
+    wallet_service: WalletService | None = None,
 ) -> FastAPI:
     settings = app_settings or get_settings()
     engine, sessions = create_database(settings.database_url)
@@ -62,6 +65,7 @@ def create_app(
     alerts = AlertService(sessions, settings.alert_webhook_url)
     fee_schedule = FeeSchedule()
     active_exchange_service = exchange_service or build_exchange_service(settings)
+    active_wallet_service = wallet_service or WalletService(settings.live_trading_enabled)
     market = MarketEngine(
         sessions,
         active_exchange_service,
@@ -116,6 +120,9 @@ def create_app(
             close_exchange = getattr(active_exchange_service, "close", None)
             if close_exchange is not None:
                 await close_exchange()
+            close_wallet = getattr(active_wallet_service, "close", None)
+            if close_wallet is not None:
+                await close_wallet()
             await cache.close()
             await engine.dispose()
 
@@ -139,12 +146,14 @@ def create_app(
     app.state.orchestrator = orchestrator
     app.state.settings_service = settings_service
     app.state.simulation = simulation
+    app.state.wallet = active_wallet_service
     app.include_router(router)
     app.include_router(funding_router)
     app.include_router(system_router)
     app.include_router(exchanges_router)
     app.include_router(telemetry_router)
     app.include_router(diagnostics_router)
+    app.include_router(wallet_router)
 
     @app.get("/")
     async def root() -> dict[str, str]:

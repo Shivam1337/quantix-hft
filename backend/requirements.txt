@@ -8,3 +8,4 @@ redis>=5.2,<6
 httpx>=0.28,<1
 websockets>=13,<18
 psutil>=5.9,<7
+eth-account>=0.13,<1

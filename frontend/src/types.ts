@@ -185,6 +185,33 @@ export type ExchangeSummary = {
   markets: ExchangeMarket[];
 };
 
+export type WalletAsset = {
+  symbol: string;
+  total: number;
+  available: number | null;
+  locked: number | null;
+};
+
+export type WalletExchangeBalance = {
+  exchange_id: string;
+  exchange_name: string;
+  status: string;
+  total_usd: number | null;
+  available_usd: number | null;
+  assets: WalletAsset[];
+  message: string | null;
+};
+
+export type WalletSnapshot = {
+  connected: boolean;
+  address: string | null;
+  imported_at: string | null;
+  refreshed_at: string | null;
+  balances: WalletExchangeBalance[];
+  live_trading_enabled: boolean;
+  message: string | null;
+};
+
 export type FundingSettlement = {
   id: number;
   venue: string;

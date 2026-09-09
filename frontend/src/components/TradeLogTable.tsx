@@ -17,6 +17,7 @@ export function TradeLogTable({ logs }: Props) {
           <thead>
             <tr>
               <th>Time</th>
+              <th>Coin</th>
               <th>Venue</th>
               <th>Side</th>
               <th>Phase</th>
@@ -30,6 +31,7 @@ export function TradeLogTable({ logs }: Props) {
             {logs.map((log) => (
               <tr key={log.id}>
                 <td className="text-slate-400">{new Date(log.created_at).toLocaleTimeString()}</td>
+                <td className="font-bold text-white">{log.symbol || "-"}</td>
                 <td className="font-semibold capitalize text-slate-200">{log.venue}</td>
                 <td>
                   <span className={`tag ${log.side === "buy" ? "receive" : "pay"}`}>
@@ -51,7 +53,7 @@ export function TradeLogTable({ logs }: Props) {
             ))}
             {!logs.length && (
               <tr>
-                <td colSpan={8} className="empty-state">
+                <td colSpan={9} className="empty-state">
                   No trade execution logs recorded yet.
                 </td>
               </tr>

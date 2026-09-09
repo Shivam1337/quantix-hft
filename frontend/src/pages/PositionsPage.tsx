@@ -15,10 +15,11 @@ type Props = {
 
 export function PositionsPage({ positions, opportunities = [], logs, account, onResetSimulation }: Props) {
   const [payments, setPayments] = useState<FundingPayment[]>([]);
-  const currentBal = account?.current_balance ?? 10000;
-  const initialBal = account?.initial_balance ?? 10000;
+  const currentBal = account?.current_balance ?? 50;
   const allocated = account?.allocated_balance ?? 0;
-  const legSize = currentBal / 2;
+  const leverage = account?.leverage ?? 3;
+  const legMargin = currentBal / 2;
+  const legNotional = legMargin * leverage;
 
   const loadPayments = async () => {
     try {
@@ -50,9 +51,15 @@ export function PositionsPage({ positions, opportunities = [], logs, account, on
               </span>
             </div>
             <div>
-              <span className="text-xs text-slate-400 block">Per-Leg Sizing (50%)</span>
+              <span className="text-xs text-slate-400 block">Margin / Leg</span>
               <span className="text-lg font-mono font-bold text-amber">
-                ${legSize.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                ${legMargin.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+            <div>
+              <span className="text-xs text-slate-400 block">Notional / Leg ({leverage}×)</span>
+              <span className="text-lg font-mono font-bold text-cyan">
+                ${legNotional.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </span>
             </div>
             <div>
@@ -80,4 +87,3 @@ export function PositionsPage({ positions, opportunities = [], logs, account, on
     </div>
   );
 }
-

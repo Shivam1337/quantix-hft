@@ -11,9 +11,10 @@ async def test_simulation_account_and_reset(client):
     account_res = await client.get("/api/v1/simulation/account")
     assert account_res.status_code == 200
     acc = account_res.json()
-    assert acc["initial_balance"] == 10_000.0
-    assert acc["current_balance"] == 10_000.0
+    assert acc["initial_balance"] == 50.0
+    assert acc["current_balance"] == 50.0
     assert acc["allocated_balance"] == 0.0
+    assert acc["leverage"] == 3.0
 
     # Open a test position to simulate trades
     radar = await client.get("/api/v1/opportunities?refresh=true")
@@ -32,7 +33,7 @@ async def test_simulation_account_and_reset(client):
     assert reset_res.status_code == 200
     reset_data = reset_res.json()
     assert reset_data["status"] == "ok"
-    assert reset_data["account"]["current_balance"] == 10_000.0
+    assert reset_data["account"]["current_balance"] == 50.0
     assert reset_data["account"]["allocated_balance"] == 0.0
 
     # Positions and logs should be wiped
@@ -64,13 +65,18 @@ async def test_autonomous_simulation_sizing_and_reasoning(client):
     assert len(open_positions) == 1
     pos = open_positions[0]
     
-    # System should divide account balance in half and use it on each leg
+    # System uses $25 margin on each leg and 3x leverage for $75 notional.
     account = await app.state.simulation.get_account()
-    expected_leg_size = account.initial_balance / 2.0  # 5,000.0
+    expected_margin = account.initial_balance / 2.0
+    expected_leg_size = expected_margin * account.leverage
+    assert pos.margin_per_leg_usd == pytest.approx(expected_margin)
     assert pos.leg_size_usd == pytest.approx(expected_leg_size)
+    assert pos.leverage == pytest.approx(3.0)
+    assert account.allocated_balance == pytest.approx(50.0)
     assert pos.open_reason is not None
     assert "Auto-opened" in pos.open_reason
-    assert "$5,000.00/leg" in pos.open_reason or f"${expected_leg_size:,.2f}" in pos.open_reason
+    assert "$25.00 margin/leg" in pos.open_reason
+    assert "$75.00 notional/leg" in pos.open_reason
 
 
 @pytest.mark.asyncio
@@ -153,7 +159,7 @@ async def test_risk_closure_reconciles_paper_account(client):
     await app.state.simulation.reconcile_risk_closures([position.id])
 
     account = await app.state.simulation.get_account()
-    assert account.current_balance == pytest.approx(10_004)
+    assert account.current_balance == pytest.approx(54)
     assert account.total_realized_pnl == pytest.approx(4)
     assert account.allocated_balance == pytest.approx(0)
 

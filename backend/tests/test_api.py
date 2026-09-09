@@ -26,15 +26,19 @@ async def test_simulator_open_close_and_logs(client):
     opportunity = radar.json()[0]
     simulation = await client.post(
         "/api/v1/simulator",
-        json={"opportunity_id": opportunity["id"], "capital_usd": 1_000, "holding_days": 30},
+        json={"opportunity_id": opportunity["id"], "capital_usd": 50, "holding_days": 30},
     )
     assert simulation.status_code == 200
     simulation_data = simulation.json()
+    assert simulation_data["leverage"] == 3
+    assert simulation_data["leg_margin_usd"] == pytest.approx(25)
+    assert simulation_data["leg_notional_usd"] == pytest.approx(75)
+    assert simulation_data["position_notional_usd"] == pytest.approx(150)
     assert simulation_data["estimated_entry_fees_usd"] == pytest.approx(
-        1_000 * opportunity["entry_fee_bps"] / 10_000
+        75 * opportunity["entry_fee_bps"] / 10_000
     )
     assert simulation_data["estimated_exit_fees_usd"] == pytest.approx(
-        1_000 * opportunity["exit_fee_bps"] / 10_000
+        75 * opportunity["exit_fee_bps"] / 10_000
     )
     assert simulation_data["estimated_round_trip_fees_usd"] == pytest.approx(
         simulation_data["estimated_entry_fees_usd"] + simulation_data["estimated_exit_fees_usd"]
@@ -72,6 +76,7 @@ async def test_simulator_open_close_and_logs(client):
     values = logs.json()
     assert len(values) == 4
     assert {value["phase"] for value in values} == {"open", "close"}
+    assert all(value["symbol"] == opportunity["symbol"] for value in values)
     assert all(
         value["fee_usd"] == pytest.approx(1_000 * value["fee_bps"] / 10_000)
         for value in values

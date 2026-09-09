@@ -21,11 +21,13 @@ export function Simulator({
   onRun,
   onReset,
 }: Props) {
-  const initialBal = account?.initial_balance ?? 10000;
-  const currentBal = account?.current_balance ?? 10000;
+  const initialBal = account?.initial_balance ?? 50;
+  const currentBal = account?.current_balance ?? 50;
   const allocatedBal = account?.allocated_balance ?? 0;
   const realizedPnl = account?.total_realized_pnl ?? 0;
-  const legSize = currentBal / 2;
+  const leverage = account?.leverage ?? 3;
+  const legMargin = currentBal / 2;
+  const legNotional = legMargin * leverage;
 
   return (
     <div className="col-span-12 grid grid-cols-12 gap-5">
@@ -60,8 +62,12 @@ export function Simulator({
 
           <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-3.5 space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">Position Allocation (50% per leg)</span>
-              <span className="font-mono text-amber font-semibold">${legSize.toLocaleString(undefined, { minimumFractionDigits: 2 })} / leg</span>
+               <span className="text-slate-400">Margin Allocation (50% per leg)</span>
+               <span className="font-mono text-amber font-semibold">${legMargin.toLocaleString(undefined, { minimumFractionDigits: 2 })} / leg</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-400">Leveraged Position Notional ({leverage}×)</span>
+              <span className="font-mono text-cyan font-semibold">${legNotional.toLocaleString(undefined, { minimumFractionDigits: 2 })} / leg</span>
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400">Capital Deployed</span>
@@ -81,8 +87,8 @@ export function Simulator({
               <strong className="text-cyan">Autonomous Sizing & Decision Rules</strong>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Our system takes the account balance, divides it in half, and sizes each leg equally (50% Long, 50% Short).
-              Positions are opened and closed automatically based on up to 3 days of exchange-confirmed funding settlements stored in DB.
+               The simulator starts with ${initialBal.toFixed(2)} total margin, allocates ${(initialBal / 2).toFixed(2)} to each leg, and applies {leverage}× leverage for ${legNotional.toFixed(2)} notional per leg.
+               Positions are opened and closed automatically based on up to 3 days of exchange-confirmed funding settlements stored in DB.
             </p>
           </div>
         </div>
@@ -115,7 +121,7 @@ export function Simulator({
               </select>
             </label>
             <p className="mt-3 text-sm text-slate-400">
-              Uses ${Number(capital || initialBal).toLocaleString()} capital over 30 days.
+               Uses ${Number(capital || initialBal).toLocaleString()} total margin (${(Number(capital || initialBal) / 2).toLocaleString()}/leg) at {leverage}× leverage over 30 days.
             </p>
           </div>
           <button className="button button-primary self-end" disabled={!selected} onClick={onRun}>
@@ -140,6 +146,10 @@ export function Simulator({
             <div>
               <span>Round-trip fees</span>
               <strong>${result.estimated_round_trip_fees_usd.toFixed(2)}</strong>
+            </div>
+            <div>
+              <span>Position notional</span>
+              <strong>${result.position_notional_usd.toFixed(2)}</strong>
             </div>
             <div>
               <span>Fee breakeven</span>

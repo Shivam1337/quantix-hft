@@ -33,7 +33,7 @@ export function OpportunityRadar(props: Props) {
       <div className="grid gap-3 border-b border-slate-800 p-4 md:grid-cols-3">
         <label className="field-label">Min APR %<input className="field" type="number" value={props.minApr} onChange={(e) => props.onMinAprChange(e.target.value)} /></label>
         <label className="field-label">Pair<select className="field" value={props.pair} onChange={(e) => props.onPairChange(e.target.value)}><option value="">All venues</option><option value="hyperliquid/lighter">Hyperliquid / Lighter</option><option value="aevo/lighter">Aevo / Lighter</option><option value="aevo/hyperliquid">Aevo / Hyperliquid</option></select></label>
-        <label className="field-label">Paper capital USD<input className="field" type="number" min="1" value={props.capital} onChange={(e) => props.onCapitalChange(e.target.value)} /></label>
+        <label className="field-label">Simulator margin USD<input className="field" type="number" min="1" value={props.capital} onChange={(e) => props.onCapitalChange(e.target.value)} /></label>
       </div>
       <div className="overflow-x-auto">
         <table>

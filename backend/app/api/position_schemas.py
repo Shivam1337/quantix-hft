@@ -17,6 +17,8 @@ class PositionRead(ReadModel):
     current_long_price: float | None = None
     current_short_price: float | None = None
     current_basis_bps: float | None = None
+    margin_per_leg_usd: float | None = None
+    leverage: float = 1.0
     funding_pnl_usd: float
     long_funding_pnl_usd: float = 0.0
     short_funding_pnl_usd: float = 0.0

@@ -53,6 +53,8 @@ def test_open_and_close_charge_each_leg_with_the_correct_fee():
     assert [leg.order_type for leg in opened.legs] == ["post_only_limit", "market"]
     assert [leg.fee_bps for leg in opened.legs] == [1.5, 0]
     assert [leg.fee_bps for leg in closed.legs] == [1.5, 0]
+    assert all(leg.symbol == "BTC-PERP" for leg in opened.legs)
+    assert all(leg.symbol == "BTC-PERP" for leg in closed.legs)
     assert sum(leg.fee_usd for leg in opened.legs) == pytest.approx(0.15)
     assert sum(leg.fee_usd for leg in closed.legs) == pytest.approx(0.15)
 

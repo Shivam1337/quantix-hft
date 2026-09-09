@@ -87,7 +87,13 @@ def create_app(
             await cache.publish_json("market:updates", message)
 
     settings_service = SettingsService(sessions, settings)
-    simulation = SimulationService(sessions, positions, settings_service)
+    simulation = SimulationService(
+        sessions,
+        positions,
+        settings_service,
+        initial_balance_usd=settings.simulation_initial_balance_usd,
+        leverage=settings.simulation_leverage,
+    )
     orchestrator = Orchestrator(
         settings, market, positions, deliver_market_update, simulation=simulation
     )

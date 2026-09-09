@@ -24,7 +24,7 @@ function App() {
   const [account, setAccount] = useState<SimulationAccount | null>(null);
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [metricsError, setMetricsError] = useState("");
-  const [capital, setCapital] = useState("1000");
+  const [capital, setCapital] = useState("50");
   const [minApr, setMinApr] = useState("0");
   const [pair, setPair] = useState("");
   const [error, setError] = useState("");
@@ -201,8 +201,8 @@ function App() {
               <MetricCard label="Best net APR" value={`${topApr.toFixed(1)}%`} detail="after 30d fee drag" />
               <MetricCard
                 label="Account balance"
-                value={`$${(account?.current_balance ?? 10000).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-                detail={`Initial: $${(account?.initial_balance ?? 10000).toLocaleString()} · 50%/leg`}
+                value={`$${(account?.current_balance ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                detail={`Initial: $${(account?.initial_balance ?? 50).toLocaleString()} · $${((account?.initial_balance ?? 50) / 2).toLocaleString()} margin/leg · ${account?.leverage ?? 3}x`}
                 accent="white"
               />
               <MetricCard label="Portfolio PnL" value={`$${totalPnl.toFixed(2)}`} detail="funding + basis" accent={totalPnl >= 0 ? "cyan" : "amber"} />

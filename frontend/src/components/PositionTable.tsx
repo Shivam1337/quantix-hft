@@ -25,7 +25,9 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
       </div>
       <div className="divide-y divide-slate-800">
         {positions.map((position) => {
-          const legSize = position.leg_size_usd ?? position.size_usd ?? 0;
+          const legNotional = position.leg_size_usd ?? position.size_usd ?? 0;
+          const leverage = position.leverage ?? 1;
+          const legMargin = position.margin_per_leg_usd ?? legNotional / leverage;
           const opp = opportunities.find(
             (o) =>
               o.symbol === position.symbol &&
@@ -39,7 +41,7 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
 
           const longMove = (curLong - position.long_entry_price) / position.long_entry_price;
           const shortMove = (position.short_entry_price - curShort) / position.short_entry_price;
-          const liveBasisPnl = (longMove + shortMove) * legSize;
+          const liveBasisPnl = (longMove + shortMove) * legNotional;
 
           const fundingPnl = position.funding_pnl_usd ?? 0;
           const settledFunding = position.settled_funding_pnl_usd ?? 0;
@@ -63,7 +65,7 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
               <p className="subline mt-1 text-xs text-slate-300">
                 Long <span className="font-semibold text-slate-100">{position.long_venue}</span> · Short{" "}
                 <span className="font-semibold text-slate-100">{position.short_venue}</span> ·{" "}
-                <span className="text-amber font-mono">${(legSize || 0).toLocaleString()}</span> / leg (50% of balance)
+                <span className="text-amber font-mono">${legMargin.toLocaleString()}</span> margin/leg · <span className="text-cyan font-mono">${legNotional.toLocaleString()}</span> notional/leg ({leverage}×)
               </p>
 
               {/* Current Prices on Both Exchanges */}

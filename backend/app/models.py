@@ -50,6 +50,8 @@ class Position(Base):
     current_long_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     current_short_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     current_basis_bps: Mapped[float | None] = mapped_column(Float, nullable=True)
+    margin_per_leg_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    leverage: Mapped[float] = mapped_column(Float, default=1.0)
     funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     long_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     short_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
@@ -98,6 +100,7 @@ class TradeLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     position_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
     venue: Mapped[str] = mapped_column(String(32))
     side: Mapped[str] = mapped_column(String(12))
     order_type: Mapped[str] = mapped_column(String(24))
@@ -140,10 +143,11 @@ class SimulationAccount(Base):
     __tablename__ = "simulation_account"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    initial_balance: Mapped[float] = mapped_column(Float, default=10_000.0)
-    current_balance: Mapped[float] = mapped_column(Float, default=10_000.0)
+    initial_balance: Mapped[float] = mapped_column(Float, default=50.0)
+    current_balance: Mapped[float] = mapped_column(Float, default=50.0)
     allocated_balance: Mapped[float] = mapped_column(Float, default=0.0)
     total_realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    leverage: Mapped[float] = mapped_column(Float, default=3.0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

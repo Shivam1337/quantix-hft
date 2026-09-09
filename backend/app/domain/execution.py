@@ -16,6 +16,7 @@ class ExecutionLeg:
     phase: str
     fee_bps: float
     fee_usd: float
+    symbol: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class ExecutionManager:
         short_price: float,
         size_usd: float,
         paper: bool = True,
+        symbol: str = "",
     ) -> ExecutionResult:
         if size_usd <= 0:
             raise ValueError("size_usd must be greater than zero")
@@ -81,8 +83,8 @@ class ExecutionManager:
         return ExecutionResult(
             paper=paper,
             legs=(
-                self._leg(long_venue, "sell", long_price, size_usd, mode, "close"),
-                self._leg(short_venue, "buy", short_price, size_usd, mode, "close"),
+                self._leg(long_venue, "sell", long_price, size_usd, mode, "close", symbol=symbol),
+                self._leg(short_venue, "buy", short_price, size_usd, mode, "close", symbol=symbol),
             ),
         )
 
@@ -105,6 +107,7 @@ class ExecutionManager:
                     size_usd,
                     mode,
                     phase,
+                    symbol=opportunity.symbol,
                 ),
                 self._leg(
                     opportunity.short_venue,
@@ -113,6 +116,7 @@ class ExecutionManager:
                     size_usd,
                     mode,
                     phase,
+                    symbol=opportunity.symbol,
                 ),
             ),
         )
@@ -125,6 +129,7 @@ class ExecutionManager:
         size_usd: float,
         mode: str,
         phase: str,
+        symbol: str = "",
     ) -> ExecutionLeg:
         order_type = self.fee_schedule.order_type_for(venue)
         fee_bps = self.fee_schedule.rate_for(venue, order_type)
@@ -138,6 +143,7 @@ class ExecutionManager:
             phase=phase,
             fee_bps=fee_bps,
             fee_usd=size_usd * fee_bps / 10_000,
+            symbol=symbol,
         )
 
     def _validate_mode(self, paper: bool) -> None:

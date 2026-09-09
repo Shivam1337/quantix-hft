@@ -36,6 +36,8 @@ class PositionService:
         paper: bool,
         open_reason: str | None = None,
         leg_size_usd: float | None = None,
+        margin_per_leg_usd: float | None = None,
+        leverage: float = 1.0,
     ) -> Position:
         result = self.execution.open_pair(opportunity, size_usd, paper)
         now = datetime.now(timezone.utc)
@@ -54,6 +56,10 @@ class PositionService:
             current_long_price=opportunity.long_mark_price,
             current_short_price=opportunity.short_mark_price,
             current_basis_bps=opportunity.basis_bps,
+            margin_per_leg_usd=(
+                margin_per_leg_usd if margin_per_leg_usd is not None else size_usd
+            ),
+            leverage=leverage,
             funding_pnl_usd=0,
             long_funding_pnl_usd=0,
             short_funding_pnl_usd=0,
@@ -87,7 +93,7 @@ class PositionService:
         )
         async with self.session_factory() as session:
             session.add(position)
-            self._add_trade_logs(session, position.id, result)
+            self._add_trade_logs(session, position.id, result, symbol=opportunity.symbol)
             await session.commit()
         return position
 
@@ -131,12 +137,13 @@ class PositionService:
                     position.long_entry_price,
                     position.short_entry_price,
                     position.size_usd,
+                    symbol=position.symbol,
                 )
             )
             self._mark_closed(position, reason)
             position.exit_fee_usd = sum(leg.fee_usd for leg in result.legs)
             position.fees_usd += position.exit_fee_usd
-            self._add_trade_logs(session, position.id, result)
+            self._add_trade_logs(session, position.id, result, symbol=position.symbol)
             await session.commit()
             return position
 
@@ -184,7 +191,7 @@ class PositionService:
                     result = self.execution.close_pair(opportunity, position.size_usd)
                     position.exit_fee_usd = sum(leg.fee_usd for leg in result.legs)
                     position.fees_usd += position.exit_fee_usd
-                    self._add_trade_logs(session, position.id, result)
+                    self._add_trade_logs(session, position.id, result, symbol=position.symbol)
                     events.append(("risk_guard", decision.reason or "risk guard", position.id))
                     closed_ids.append(position.id)
             await session.commit()
@@ -200,11 +207,17 @@ class PositionService:
         position.close_reason = reason
 
     @staticmethod
-    def _add_trade_logs(session: AsyncSession, position_id: str, result: ExecutionResult) -> None:
+    def _add_trade_logs(
+        session: AsyncSession,
+        position_id: str,
+        result: ExecutionResult,
+        symbol: str | None = None,
+    ) -> None:
         for leg in result.legs:
             session.add(
                 TradeLog(
                     position_id=position_id,
+                    symbol=symbol or getattr(leg, "symbol", None) or None,
                     venue=leg.venue,
                     side=leg.side,
                     order_type=leg.order_type,

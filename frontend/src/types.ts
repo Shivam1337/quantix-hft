@@ -37,6 +37,8 @@ export type Position = {
   short_venue: string;
   size_usd: number;
   leg_size_usd?: number | null;
+  margin_per_leg_usd?: number | null;
+  leverage?: number;
   long_entry_price: number;
   short_entry_price: number;
   entry_basis_bps: number;
@@ -80,6 +82,7 @@ export type SimulationAccount = {
   current_balance: number;
   allocated_balance: number;
   total_realized_pnl: number;
+  leverage: number;
   updated_at: string;
 };
 
@@ -90,11 +93,16 @@ export type Settings = {
   basis_threshold_bps: number;
   auto_unwind: boolean;
   entry_min_history_snapshots: number;
-  entry_min_spread_stability_pct: number;
-  alert_webhook_url: string | null;
+  entry_min_spread_stability_pct: number; alert_webhook_url: string | null;
 };
 
 export type Simulation = {
+  capital_usd: number;
+  holding_days: number;
+  leverage: number;
+  leg_margin_usd: number;
+  leg_notional_usd: number;
+  position_notional_usd: number;
   projected_hourly_cashflow_usd: number;
   projected_period_funding_usd: number;
   estimated_round_trip_fees_usd: number;
@@ -123,14 +131,7 @@ export type SystemMetrics = {
   timestamp: string;
 };
 
-export type NavigationPage =
-  | "dashboard"
-  | "opportunities"
-  | "positions"
-  | "exchanges"
-  | "throughput"
-  | "simulator"
-  | "settings";
+export type NavigationPage = "dashboard" | "opportunities" | "positions" | "exchanges" | "throughput" | "simulator" | "settings";
 
 export type ThemeMode = "dark" | "light" | "system";
 
@@ -188,8 +189,7 @@ export type ExchangeSummary = {
 export type WalletAsset = {
   symbol: string;
   total: number;
-  available: number | null;
-  locked: number | null;
+  available: number | null; locked: number | null;
 };
 
 export type WalletExchangeBalance = {
@@ -220,14 +220,13 @@ export type FundingSettlement = {
   funding_rate_native: number | null;
   funding_interval_hours: number;
   funding_cycle_at: string;
-  settled_at: string;
-  source: string;
-  created_at: string;
+  settled_at: string; source: string; created_at: string;
 };
 
 export type TradeLog = {
   id: number;
   position_id: string | null;
+  symbol?: string | null;
   venue: string;
   side: string;
   order_type: string;

@@ -54,6 +54,7 @@ class FundingSettlementRead(ReadModel):
 class TradeLogRead(ReadModel):
     id: int
     position_id: str | None
+    symbol: str | None = None
     venue: str
     side: str
     order_type: str
@@ -80,14 +81,19 @@ class ClosePositionRequest(BaseModel):
 
 class SimulatorRequest(BaseModel):
     opportunity_id: str
-    capital_usd: float = Field(gt=0)
+    capital_usd: float = Field(gt=0, description="Total margin across both legs")
     holding_days: float = Field(default=30, gt=0, le=3650)
+    leverage: float = Field(default=3.0, ge=1, le=100)
 
 
 class SimulatorResponse(BaseModel):
     opportunity_id: str
     capital_usd: float
     holding_days: float
+    leverage: float
+    leg_margin_usd: float
+    leg_notional_usd: float
+    position_notional_usd: float
     projected_hourly_cashflow_usd: float
     projected_period_funding_usd: float
     estimated_round_trip_fees_usd: float
@@ -185,6 +191,7 @@ class SimulationAccountRead(ReadModel):
     current_balance: float
     allocated_balance: float
     total_realized_pnl: float
+    leverage: float
     updated_at: datetime
 
 

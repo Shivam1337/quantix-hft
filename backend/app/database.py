@@ -40,6 +40,8 @@ def _add_fee_columns(connection) -> None:
             "current_long_price": "FLOAT NULL",
             "current_short_price": "FLOAT NULL",
             "current_basis_bps": "FLOAT NULL",
+            "margin_per_leg_usd": "FLOAT NULL",
+            "leverage": "FLOAT DEFAULT 1",
             "settled_funding_pnl_usd": "FLOAT DEFAULT 0",
             "settled_long_funding_pnl_usd": "FLOAT DEFAULT 0",
             "settled_short_funding_pnl_usd": "FLOAT DEFAULT 0",
@@ -58,6 +60,7 @@ def _add_fee_columns(connection) -> None:
             "last_rate_observed_at": "TIMESTAMP NULL",
         },
         "trade_logs": {
+            "symbol": "VARCHAR(32) NULL",
             "phase": "VARCHAR(12) DEFAULT 'open'",
             "fee_bps": "FLOAT DEFAULT 0",
             "fee_usd": "FLOAT DEFAULT 0",
@@ -73,6 +76,9 @@ def _add_fee_columns(connection) -> None:
             "settlement_type": "VARCHAR(24) DEFAULT 'legacy_unconfirmed'",
             "rate_source": "VARCHAR(32) DEFAULT 'legacy_unconfirmed'",
         },
+        "simulation_account": {
+            "leverage": "FLOAT DEFAULT 3",
+        },
     }
     inspector = inspect(connection)
     for table, columns in additions.items():
@@ -80,6 +86,14 @@ def _add_fee_columns(connection) -> None:
         for name, definition in columns.items():
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+
+    connection.execute(
+        text(
+            "UPDATE trade_logs SET symbol = ("
+            "SELECT symbol FROM positions WHERE positions.id = trade_logs.position_id"
+            ") WHERE (symbol IS NULL OR symbol = '') AND position_id IS NOT NULL"
+        )
+    )
 
     connection.execute(
         text(

@@ -4,7 +4,7 @@ from sqlalchemy import select
 from app.api.position_schemas import FundingPendingCycleRead, PositionRead
 from app.domain.entry import entry_rejection_reason
 from app.domain.positioning import opportunity_for_position
-from app.models import FundingPendingCycle, TradeLog
+from app.models import FundingPendingCycle, Position, TradeLog
 from app.schemas import (
     ClosePositionRequest,
     FundingSettlementRead,
@@ -152,16 +152,22 @@ async def simulator(request: Request, body: SimulatorRequest) -> SimulatorRespon
     if opportunity is None:
         raise HTTPException(status_code=404, detail="opportunity not found; refresh market data")
     hours = body.holding_days * 24
-    hourly_cashflow = opportunity.gross_hourly_rate * body.capital_usd
+    leg_margin = body.capital_usd / 2.0
+    leg_notional = leg_margin * body.leverage
+    hourly_cashflow = opportunity.gross_hourly_rate * leg_notional
     funding = hourly_cashflow * hours
-    entry_fees = opportunity.entry_fee_bps / 10_000 * body.capital_usd
-    exit_fees = opportunity.exit_fee_bps / 10_000 * body.capital_usd
+    entry_fees = opportunity.entry_fee_bps / 10_000 * leg_notional
+    exit_fees = opportunity.exit_fee_bps / 10_000 * leg_notional
     fees = entry_fees + exit_fees
     net_profit = funding - entry_fees - exit_fees
     return SimulatorResponse(
         opportunity_id=opportunity.id,
         capital_usd=body.capital_usd,
         holding_days=body.holding_days,
+        leverage=body.leverage,
+        leg_margin_usd=leg_margin,
+        leg_notional_usd=leg_notional,
+        position_notional_usd=leg_notional * 2.0,
         projected_hourly_cashflow_usd=hourly_cashflow,
         projected_period_funding_usd=funding,
         estimated_round_trip_fees_usd=fees,
@@ -194,14 +200,22 @@ async def logs(
     request: Request, limit: int = Query(default=100, ge=1, le=500)
 ) -> list[TradeLogRead]:
     async with request.app.state.session_factory() as session:
-        values = list(
+        rows = list(
             (
                 await session.execute(
-                    select(TradeLog).order_by(TradeLog.created_at.desc()).limit(limit)
+                    select(TradeLog, Position.symbol)
+                    .outerjoin(Position, TradeLog.position_id == Position.id)
+                    .order_by(TradeLog.created_at.desc())
+                    .limit(limit)
                 )
-            ).scalars()
+            ).all()
         )
-    return [TradeLogRead.model_validate(value) for value in values]
+    output: list[TradeLogRead] = []
+    for log, pos_symbol in rows:
+        if not log.symbol and pos_symbol:
+            log.symbol = pos_symbol
+        output.append(TradeLogRead.model_validate(log))
+    return output
 
 
 @router.post("/simulation/reset", response_model=SimulationResetResponse)

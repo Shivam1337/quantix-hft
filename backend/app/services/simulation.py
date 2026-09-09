@@ -20,22 +20,39 @@ class SimulationService:
         session_factory: async_sessionmaker[AsyncSession],
         positions_service: PositionService,
         settings_service: SettingsService,
+        initial_balance_usd: float = 50.0,
+        leverage: float = 3.0,
     ):
         self.session_factory = session_factory
         self.positions_service = positions_service
         self.settings_service = settings_service
+        self.initial_balance_usd = initial_balance_usd
+        self.leverage = leverage
 
     async def get_or_create_account(self, session: AsyncSession) -> SimulationAccount:
         account = await session.get(SimulationAccount, 1)
         if account is None:
             account = SimulationAccount(
                 id=1,
-                initial_balance=10_000.0,
-                current_balance=10_000.0,
+                initial_balance=self.initial_balance_usd,
+                current_balance=self.initial_balance_usd,
                 allocated_balance=0.0,
                 total_realized_pnl=0.0,
+                leverage=self.leverage,
             )
             session.add(account)
+            await session.commit()
+            await session.refresh(account)
+        elif (
+            account.initial_balance == 10_000.0
+            and account.current_balance == 10_000.0
+            and account.allocated_balance == 0.0
+            and account.total_realized_pnl == 0.0
+        ):
+            # Migrate an untouched account created with the previous $10,000 default.
+            account.initial_balance = self.initial_balance_usd
+            account.current_balance = self.initial_balance_usd
+            account.leverage = self.leverage
             await session.commit()
             await session.refresh(account)
         return account
@@ -75,7 +92,14 @@ class SimulationService:
                 ).scalars()
             )
             account.allocated_balance = sum(
-                2 * (position.leg_size_usd or position.size_usd) for position in active
+                2
+                * (
+                    position.margin_per_leg_usd
+                    if position.margin_per_leg_usd is not None
+                    else (position.leg_size_usd or position.size_usd)
+                    / max(position.leverage, 1.0)
+                )
+                for position in active
             )
             await session.commit()
 
@@ -145,7 +169,7 @@ class SimulationService:
                     open_positions = [p for p in open_positions if p.id != pos.id]
 
             # 2. Autonomous entry evaluation (only when no open positions)
-            if not open_positions and account.current_balance >= 100:
+            if not open_positions and account.current_balance >= self.initial_balance_usd:
                 eligible = [
                     item
                     for item in values
@@ -155,12 +179,15 @@ class SimulationService:
                 if eligible:
                     # Pick best opportunity considering historical carry
                     best = eligible[0]
-                    # System takes account balance, divides it in half, and uses it on each leg
-                    leg_size_usd = account.current_balance / 2.0
+                    # Keep the account balance as margin, then apply leverage to each leg's
+                    # executable notional. The $50 default therefore starts at $25 margin/leg.
+                    leg_margin_usd = account.current_balance / 2.0
+                    leg_size_usd = leg_margin_usd * self.leverage
                     if best.capacity_usd > 0:
                         leg_size_usd = min(leg_size_usd, best.capacity_usd)
+                        leg_margin_usd = leg_size_usd / self.leverage
 
-                    if leg_size_usd >= 50:
+                    if leg_margin_usd >= self.initial_balance_usd / 2.0:
                         hist_desc = (
                             f"confirmed history APR: {best.historical_3d_apr_pct:.1f}% "
                             f"({best.historical_snapshots_count} snaps, "
@@ -174,8 +201,9 @@ class SimulationService:
                             f"Confirmed-rate APR: {best.net_apr_pct:.1f}%, "
                             f"Basis: {best.basis_bps:.1f} bps. "
                             f"Funding source: {hist_desc}. "
-                            f"Sized at ${leg_size_usd:,.2f}/leg (50% of "
-                            f"${account.current_balance:,.2f} account balance)."
+                            f"Sized at ${leg_margin_usd:,.2f} margin/leg with "
+                            f"{self.leverage:.1f}x leverage (${leg_size_usd:,.2f} "
+                            f"notional/leg; ${leg_size_usd * 2:,.2f} both legs)."
                         )
 
                         await self.positions_service.open_position(
@@ -184,7 +212,9 @@ class SimulationService:
                             paper=True,
                             open_reason=open_reason,
                             leg_size_usd=leg_size_usd,
+                            margin_per_leg_usd=leg_margin_usd,
+                            leverage=self.leverage,
                         )
-                        account.allocated_balance = leg_size_usd * 2.0
+                        account.allocated_balance = leg_margin_usd * 2.0
                         await session.commit()
                         logger.info("auto-opened position on %s: %s", best.symbol, open_reason)

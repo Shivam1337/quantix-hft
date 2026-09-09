@@ -23,6 +23,8 @@ def test_unconfirmed_funding_does_not_trigger_flip():
 
 
 def test_alert_only_mode_does_not_unwind():
-    decision = RiskEngine(RiskConfig(auto_unwind=False)).evaluate(100, 100, 0)
+    decision = RiskEngine(RiskConfig(basis_threshold_bps=50, auto_unwind=False)).evaluate(
+        100, 100, 0
+    )
     assert decision.basis_breach
     assert not decision.should_unwind

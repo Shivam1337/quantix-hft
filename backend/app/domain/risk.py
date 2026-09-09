@@ -5,7 +5,7 @@ from app.domain.types import RiskDecision
 
 @dataclass(frozen=True)
 class RiskConfig:
-    basis_threshold_bps: float = 75
+    basis_threshold_bps: float = 200
     negative_hours_to_unwind: int = 2
     auto_unwind: bool = True
 

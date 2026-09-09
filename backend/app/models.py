@@ -121,7 +121,7 @@ class SystemSetting(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     min_apr: Mapped[float] = mapped_column(Float, default=10)
     min_open_interest: Mapped[float] = mapped_column(Float, default=100_000)
-    basis_threshold_bps: Mapped[float] = mapped_column(Float, default=75)
+    basis_threshold_bps: Mapped[float] = mapped_column(Float, default=200)
     auto_unwind: Mapped[bool] = mapped_column(default=True)
     entry_min_history_snapshots: Mapped[int] = mapped_column(Integer, default=6)
     entry_min_spread_stability_pct: Mapped[float] = mapped_column(Float, default=60)

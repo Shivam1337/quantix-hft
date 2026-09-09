@@ -10,6 +10,9 @@ from app.exchanges.service import ExchangeService
 from app.services.historical_funding import HistoricalFundingService
 from app.services.telemetry import telemetry
 
+SNAPSHOT_CACHE_KEY = "market:snapshots"
+SNAPSHOT_CACHE_TTL_SECONDS = 120
+
 
 class MarketEngine:
     def __init__(
@@ -41,6 +44,11 @@ class MarketEngine:
             telemetry.record_message(snapshot.venue)
             self.latest_snapshots[(snapshot.venue.lower(), snapshot.symbol.upper())] = snapshot
 
+        await self.cache.set_json(
+            SNAPSHOT_CACHE_KEY,
+            [self.snapshot_to_dict(value) for value in self.latest_snapshots.values()],
+            ttl_seconds=SNAPSHOT_CACHE_TTL_SECONDS,
+        )
         symbols = sorted({snapshot.symbol.upper() for snapshot in snapshots})
         await self.historical_service.sync_confirmed_history(
             self.exchange_service, symbols=symbols
@@ -61,11 +69,15 @@ class MarketEngine:
             await self.refresh()
         elif not self.latest and not await self._load_cached():
             await self.refresh()
+        if not self.latest_snapshots:
+            await self.load_cached_snapshots()
         return list(self.latest.values())
 
     async def get_opportunity(self, opportunity_id: str) -> OpportunityData | None:
         if not self.latest and not await self._load_cached():
             await self.refresh()
+        if not self.latest_snapshots:
+            await self.load_cached_snapshots()
         return self.latest.get(opportunity_id)
 
     def apply_cached_opportunities(self, values: list[dict]) -> None:
@@ -73,6 +85,35 @@ class MarketEngine:
         if opportunities:
             self.latest = {item.id: item for item in opportunities}
             self.last_refresh = max(item.observed_at for item in opportunities)
+
+    def apply_cached_snapshots(self, values: list[dict]) -> bool:
+        snapshots: dict[tuple[str, str], MarketSnapshotData] = {}
+        for value in values:
+            try:
+                snapshot = MarketSnapshotData(
+                    venue=str(value["venue"]),
+                    symbol=str(value["symbol"]),
+                    mark_price=float(value["mark_price"]),
+                    open_interest=float(value["open_interest"]),
+                    bid=float(value["bid"]),
+                    ask=float(value["ask"]),
+                    observed_at=datetime.fromisoformat(str(value["observed_at"])),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            key = (snapshot.venue.lower(), snapshot.symbol.upper())
+            snapshots[key] = snapshot
+        if not snapshots:
+            return False
+        self.latest_snapshots.update(snapshots)
+        self.last_refresh = max(snapshot.observed_at for snapshot in snapshots.values())
+        return True
+
+    async def load_cached_snapshots(self) -> bool:
+        values = await self.cache.get_json(SNAPSHOT_CACHE_KEY)
+        if not isinstance(values, list):
+            return False
+        return self.apply_cached_snapshots(values)
 
     async def _load_cached(self) -> bool:
         values = await self.cache.get_json("market:opportunities")
@@ -90,6 +131,19 @@ class MarketEngine:
                 opportunity.funding_history_latest_cycle.isoformat()
             )
         return value
+
+    @staticmethod
+    def snapshot_to_dict(snapshot: MarketSnapshotData) -> dict:
+        """Serialize execution/liquidity data without any funding-rate fields."""
+        return {
+            "venue": snapshot.venue,
+            "symbol": snapshot.symbol,
+            "mark_price": snapshot.mark_price,
+            "open_interest": snapshot.open_interest,
+            "bid": snapshot.bid,
+            "ask": snapshot.ask,
+            "observed_at": snapshot.observed_at.isoformat(),
+        }
 
     @staticmethod
     def _from_dict(value: dict) -> OpportunityData:

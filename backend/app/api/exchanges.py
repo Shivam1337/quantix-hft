@@ -25,6 +25,8 @@ async def list_exchanges(request: Request) -> list[ExchangeSummaryRead]:
         venues = ["hyperliquid", "aevo", "lighter"]
 
     if not market.latest_snapshots:
+        await market.load_cached_snapshots()
+    if not market.latest_snapshots:
         try:
             await market.list_opportunities()
         except Exception:

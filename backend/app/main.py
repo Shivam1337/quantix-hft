@@ -37,8 +37,11 @@ async def relay_market_updates(
         if not isinstance(message, dict):
             continue
         data = message.get("data", {})
-        if isinstance(data, dict) and isinstance(data.get("opportunities"), list):
-            market.apply_cached_opportunities(data["opportunities"])
+        if isinstance(data, dict):
+            if isinstance(data.get("opportunities"), list):
+                market.apply_cached_opportunities(data["opportunities"])
+            if isinstance(data.get("snapshots"), list):
+                market.apply_cached_snapshots(data["snapshots"])
         await manager.broadcast(message)
 
 

@@ -60,6 +60,10 @@ class Orchestrator:
                     "type": "market_update",
                     "data": {
                         "opportunities": [self.market._to_dict(item) for item in opps],
+                        "snapshots": [
+                            self.market.snapshot_to_dict(snapshot)
+                            for snapshot in self.market.latest_snapshots.values()
+                        ],
                         "positions": [self._position_dict(item) for item in positions],
                         "account": account_data,
                     },

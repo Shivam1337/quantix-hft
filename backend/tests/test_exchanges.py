@@ -11,6 +11,7 @@ from app.services.telemetry import telemetry
 class AevoFixtureAdapter(AevoAdapter):
     def __init__(self):
         super().__init__(request_interval_seconds=0)
+        self.history_params: list[dict] = []
 
     async def _request(self, method: str, path: str, **kwargs):
         if path.startswith("/instrument/"):
@@ -22,6 +23,7 @@ class AevoFixtureAdapter(AevoAdapter):
                 "best_ask": {"price": "65001"},
             }
         if path == "/funding-history":
+            self.history_params.append(kwargs.get("params", {}))
             return {
                 "funding_history": [
                     ["BTC-PERP", "1788861600000000000", "0.000012", "10"]
@@ -155,6 +157,7 @@ async def test_adapters_parse_official_confirmed_history():
     assert len(aevo_rows) == 1
     assert aevo_rows[0].funding_rate == pytest.approx(0.000012)
     assert aevo_rows[0].source == "aevo_funding_history"
+    assert aevo.history_params[0]["limit"] == AevoAdapter.HISTORY_LIMIT
 
     lighter = LighterFixtureAdapter()
     lighter_rows = await lighter.fetch_funding_history(

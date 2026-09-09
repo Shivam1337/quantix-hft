@@ -141,6 +141,16 @@ async def test_market_engine_replaces_live_liquidity_snapshot(tmp_path):
     market = MarketEngine(session_factory, service, Cache(None), CalculatorConfig())
     await market.ingest([snapshot("lighter")])
     assert market.latest_snapshots[("lighter", "BTC-PERP")].mark_price == 65_000
+    cached = await market.cache.get_json("market:snapshots")
+    assert cached[0].keys() == {
+        "venue",
+        "symbol",
+        "mark_price",
+        "open_interest",
+        "bid",
+        "ask",
+        "observed_at",
+    }
     updated = MarketSnapshotData(
         venue="lighter",
         symbol="BTC-PERP",
@@ -152,6 +162,9 @@ async def test_market_engine_replaces_live_liquidity_snapshot(tmp_path):
     )
     await market.ingest([updated])
     assert market.latest_snapshots[("lighter", "BTC-PERP")].mark_price == 65_100
+    restored = MarketEngine(session_factory, service, market.cache, CalculatorConfig())
+    assert await restored.load_cached_snapshots()
+    assert restored.latest_snapshots[("lighter", "BTC-PERP")].mark_price == 65_100
     await engine.dispose()
 
 

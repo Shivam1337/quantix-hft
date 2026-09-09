@@ -60,7 +60,13 @@ class HistoricalFundingService:
                 return 0
             start = current - timedelta(days=self.lookback_days)
             rows = await fetcher(start, current)
-            normalized = [self._normalize(row) for row in rows if row.funding_cycle_at]
+            normalized = []
+            for row in rows:
+                if not row.funding_cycle_at:
+                    continue
+                value = self._normalize(row)
+                if start <= value.funding_cycle_at <= current:
+                    normalized.append(value)
             if not normalized:
                 return 0
 

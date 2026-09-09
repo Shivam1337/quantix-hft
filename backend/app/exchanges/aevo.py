@@ -15,6 +15,8 @@ from app.exchanges.base import (
 
 
 class AevoAdapter(HttpExchangeAdapter):
+    HISTORY_LIMIT = 100
+
     def __init__(
         self,
         base_url: str = "https://api.aevo.xyz",
@@ -96,7 +98,9 @@ class AevoAdapter(HttpExchangeAdapter):
                         "instrument_name": instrument_name,
                         "start_timestamp": int(start_time.timestamp() * 1_000_000_000),
                         "end_timestamp": int(end_time.timestamp() * 1_000_000_000),
-                        "limit": 1000,
+                        # Aevo rejects 1000 with LIMIT_EXCEED_ALLOWED_MAX. The
+                        # three-day hourly lookback needs at most 73 rows.
+                        "limit": self.HISTORY_LIMIT,
                     },
                 )
         except (ExchangeError, ExchangeRateLimited):

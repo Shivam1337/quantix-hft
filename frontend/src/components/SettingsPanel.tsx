@@ -13,6 +13,9 @@ export function SettingsPanel({ settings, onSave, theme = "system", onThemeChang
   const [basis, setBasis] = useState("");
   const [history, setHistory] = useState("");
   const [stability, setStability] = useState("");
+  const [holdingHours, setHoldingHours] = useState("");
+  const [minCapital, setMinCapital] = useState("");
+  const [maxDrawdown, setMaxDrawdown] = useState("");
   const [auto, setAuto] = useState<boolean | null>(null);
 
   if (!settings) {
@@ -30,6 +33,9 @@ export function SettingsPanel({ settings, onSave, theme = "system", onThemeChang
       basis_threshold_bps: basis ? Number(basis) : settings.basis_threshold_bps,
       entry_min_history_snapshots: history ? Number(history) : settings.entry_min_history_snapshots,
       entry_min_spread_stability_pct: stability ? Number(stability) : settings.entry_min_spread_stability_pct,
+      entry_expected_holding_hours: holdingHours ? Number(holdingHours) : settings.entry_expected_holding_hours,
+      simulation_min_capital_usd: minCapital ? Number(minCapital) : settings.simulation_min_capital_usd,
+      simulation_max_drawdown_pct: maxDrawdown ? Number(maxDrawdown) : settings.simulation_max_drawdown_pct,
       auto_unwind: auto ?? settings.auto_unwind,
     });
 
@@ -138,13 +144,27 @@ export function SettingsPanel({ settings, onSave, theme = "system", onThemeChang
               />
             </label>
           </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <label className="field-label">
+              Expected hold (hours)
+              <input className="field" type="number" min="1" value={holdingHours || settings.entry_expected_holding_hours} onChange={(e) => setHoldingHours(e.target.value)} />
+            </label>
+            <label className="field-label">
+              Minimum capital USD
+              <input className="field" type="number" min="1" value={minCapital || settings.simulation_min_capital_usd} onChange={(e) => setMinCapital(e.target.value)} />
+            </label>
+            <label className="field-label">
+              Maximum drawdown %
+              <input className="field" type="number" min="0" max="100" value={maxDrawdown || settings.simulation_max_drawdown_pct} onChange={(e) => setMaxDrawdown(e.target.value)} />
+            </label>
+          </div>
           <label className="flex items-center gap-3 py-2 text-sm text-slate-300">
             <input
               type="checkbox"
               checked={auto ?? settings.auto_unwind}
               onChange={(e) => setAuto(e.target.checked)}
             />
-            Close a position after two negative funding hours or a basis breach.
+            Close a position after {settings.negative_hours_to_unwind} negative funding hours or a basis breach.
           </label>
           <button className="button button-primary w-fit" onClick={save}>
             Save parameters

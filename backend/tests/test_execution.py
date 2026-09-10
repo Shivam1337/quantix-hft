@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -55,8 +56,11 @@ def test_open_and_close_charge_each_leg_with_the_correct_fee():
     assert [leg.fee_bps for leg in closed.legs] == [1.5, 0]
     assert all(leg.symbol == "BTC-PERP" for leg in opened.legs)
     assert all(leg.symbol == "BTC-PERP" for leg in closed.legs)
-    assert sum(leg.fee_usd for leg in opened.legs) == pytest.approx(0.15)
-    assert sum(leg.fee_usd for leg in closed.legs) == pytest.approx(0.15)
+    assert sum(leg.fee_usd for leg in opened.legs) == pytest.approx(0.135)
+    assert opened.matched_size_usd == pytest.approx(900)
+    assert opened.temporary_exposure_usd == pytest.approx(900)
+    assert closed.matched_size_usd == pytest.approx(900)
+    assert sum(leg.fee_usd for leg in closed.legs) == pytest.approx(0.135)
 
 
 def test_aevo_market_legs_use_standard_taker_fee():
@@ -64,3 +68,23 @@ def test_aevo_market_legs_use_standard_taker_fee():
     assert [leg.order_type for leg in result.legs] == ["market", "market"]
     assert [leg.fee_bps for leg in result.legs] == [0, 8.0]
     assert sum(leg.fee_usd for leg in result.legs) == pytest.approx(0.8)
+
+
+def test_paper_fill_uses_book_sides_slippage_and_partial_post_only_fill():
+    manager = ExecutionManager()
+    item = replace(
+        opportunity("hyperliquid", "lighter"),
+        long_bid_price=64_990,
+        long_ask_price=65_010,
+        short_bid_price=64_980,
+        short_ask_price=65_020,
+    )
+
+    result = manager.open_pair(item, 1_000)
+
+    assert result.legs[0].price == pytest.approx(64_990)
+    assert result.legs[1].price == pytest.approx(64_980 * (1 - 0.0001))
+    assert result.legs[0].size_usd == pytest.approx(900)
+    assert result.legs[1].size_usd == pytest.approx(900)
+    assert result.legs[0].status == "paper_partial"
+    assert result.temporary_exposure_usd == pytest.approx(900)

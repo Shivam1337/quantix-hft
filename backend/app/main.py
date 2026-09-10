@@ -9,6 +9,7 @@ from app.api.diagnostics import router as diagnostics_router
 from app.api.exchanges import router as exchanges_router
 from app.api.funding import funding_router
 from app.api.routes import router
+from app.api.simulation import router as simulation_router
 from app.api.system import router as system_router
 from app.api.telemetry_router import router as telemetry_router
 from app.api.wallet import router as wallet_router
@@ -17,7 +18,7 @@ from app.cache import Cache
 from app.config import Settings, get_settings
 from app.database import create_database, initialize_database
 from app.domain.calculator import CalculatorConfig
-from app.domain.execution import ExecutionManager
+from app.domain.execution import ExecutionManager, PaperExecutionConfig
 from app.domain.fees import FeeSchedule
 from app.domain.risk import RiskConfig, RiskEngine
 from app.exchanges.service import ExchangeService, build_exchange_service
@@ -59,11 +60,13 @@ def create_app(
     risk = RiskEngine(
         RiskConfig(
             basis_threshold_bps=settings.basis_threshold_bps,
+            negative_hours_to_unwind=settings.negative_hours_to_unwind,
             auto_unwind=settings.auto_unwind,
         )
     )
     alerts = AlertService(sessions, settings.alert_webhook_url)
     fee_schedule = FeeSchedule()
+    settings_service = SettingsService(sessions, settings)
     active_exchange_service = exchange_service or build_exchange_service(settings)
     active_wallet_service = wallet_service or WalletService(settings.live_trading_enabled)
     market = MarketEngine(
@@ -74,10 +77,20 @@ def create_app(
             fee_schedule=fee_schedule,
             capacity_fraction=settings.capacity_fraction,
             min_history_cycles=settings.entry_min_history_snapshots,
+            expected_holding_hours=settings.entry_expected_holding_hours,
         ),
+        settings_service=settings_service,
     )
     positions = PositionService(
-        sessions, ExecutionManager(settings.live_trading_enabled, fee_schedule), risk, alerts
+        sessions,
+        ExecutionManager(
+            settings.live_trading_enabled,
+            fee_schedule,
+            PaperExecutionConfig(settings.paper_slippage_bps, settings.paper_post_only_fill_ratio),
+        ),
+        risk,
+        alerts,
+        settings_service=settings_service,
     )
 
     async def deliver_market_update(message: dict) -> None:
@@ -86,7 +99,6 @@ def create_app(
         else:
             await cache.publish_json("market:updates", message)
 
-    settings_service = SettingsService(sessions, settings)
     simulation = SimulationService(
         sessions,
         positions,
@@ -154,6 +166,7 @@ def create_app(
     app.state.simulation = simulation
     app.state.wallet = active_wallet_service
     app.include_router(router)
+    app.include_router(simulation_router)
     app.include_router(funding_router)
     app.include_router(system_router)
     app.include_router(exchanges_router)

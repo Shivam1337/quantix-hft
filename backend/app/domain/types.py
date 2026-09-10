@@ -56,6 +56,14 @@ class OpportunityData:
     spread_stability_pct: float | None = None
     funding_rate_source: str = "confirmed_history"
     funding_history_latest_cycle: datetime | None = None
+    expected_holding_hours: float = 24.0
+    recent_gross_hourly_rate: float | None = None
+    recent_net_hourly_rate: float | None = None
+    recent_spread_stability_pct: float | None = None
+    long_bid_price: float | None = None
+    long_ask_price: float | None = None
+    short_bid_price: float | None = None
+    short_ask_price: float | None = None
 
 
 @dataclass(frozen=True)

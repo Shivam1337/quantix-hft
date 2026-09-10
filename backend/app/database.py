@@ -48,7 +48,9 @@ def _add_fee_columns(connection) -> None:
             "accrued_funding_pnl_usd": "FLOAT DEFAULT 0",
             "accrued_long_funding_pnl_usd": "FLOAT DEFAULT 0",
             "accrued_short_funding_pnl_usd": "FLOAT DEFAULT 0",
+            "accounted_net_pnl_usd": "FLOAT DEFAULT 0",
             "accrual_started_at": "TIMESTAMP NULL",
+            "realized_basis_pnl_usd": "FLOAT DEFAULT 0",
             "entry_net_apr_pct": "FLOAT NULL",
             "entry_historical_apr_pct": "FLOAT NULL",
             "entry_long_funding_rate": "FLOAT NULL",
@@ -58,6 +60,10 @@ def _add_fee_columns(connection) -> None:
             "last_long_funding_rate": "FLOAT NULL",
             "last_short_funding_rate": "FLOAT NULL",
             "last_rate_observed_at": "TIMESTAMP NULL",
+            "simulation_run_id": "INTEGER NULL",
+            "requested_size_usd": "FLOAT NULL",
+            "execution_fill_ratio": "FLOAT DEFAULT 1",
+            "temporary_exposure_usd": "FLOAT DEFAULT 0",
         },
         "trade_logs": {
             "symbol": "VARCHAR(32) NULL",
@@ -68,6 +74,10 @@ def _add_fee_columns(connection) -> None:
         "system_settings": {
             "entry_min_history_snapshots": "INTEGER DEFAULT 6",
             "entry_min_spread_stability_pct": "FLOAT DEFAULT 60",
+            "negative_hours_to_unwind": "INTEGER DEFAULT 2",
+            "entry_expected_holding_hours": "FLOAT DEFAULT 24",
+            "simulation_min_capital_usd": "FLOAT DEFAULT 100",
+            "simulation_max_drawdown_pct": "FLOAT DEFAULT 25",
         },
         "funding_payments": {
             # A pre-policy row has no proof of exchange confirmation. Quarantine
@@ -78,6 +88,7 @@ def _add_fee_columns(connection) -> None:
         },
         "simulation_account": {
             "leverage": "FLOAT DEFAULT 3",
+            "run_id": "INTEGER NULL",
         },
     }
     inspector = inspect(connection)

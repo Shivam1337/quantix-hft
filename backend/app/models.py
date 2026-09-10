@@ -61,12 +61,14 @@ class Position(Base):
     accrued_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     accrued_long_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     accrued_short_funding_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
+    accounted_net_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     last_funding_cycle: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     accrual_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    realized_basis_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     basis_pnl_usd: Mapped[float] = mapped_column(Float, default=0)
     entry_fee_usd: Mapped[float] = mapped_column(Float, default=0)
     exit_fee_usd: Mapped[float] = mapped_column(Float, default=0)
@@ -80,6 +82,10 @@ class Position(Base):
     open_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    simulation_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    requested_size_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_fill_ratio: Mapped[float] = mapped_column(Float, default=1.0)
+    temporary_exposure_usd: Mapped[float] = mapped_column(Float, default=0)
     entry_net_apr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     entry_historical_apr_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     entry_long_funding_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -123,8 +129,12 @@ class SystemSetting(Base):
     min_open_interest: Mapped[float] = mapped_column(Float, default=100_000)
     basis_threshold_bps: Mapped[float] = mapped_column(Float, default=200)
     auto_unwind: Mapped[bool] = mapped_column(default=True)
+    negative_hours_to_unwind: Mapped[int] = mapped_column(Integer, default=2)
     entry_min_history_snapshots: Mapped[int] = mapped_column(Integer, default=6)
     entry_min_spread_stability_pct: Mapped[float] = mapped_column(Float, default=60)
+    entry_expected_holding_hours: Mapped[float] = mapped_column(Float, default=24)
+    simulation_min_capital_usd: Mapped[float] = mapped_column(Float, default=100)
+    simulation_max_drawdown_pct: Mapped[float] = mapped_column(Float, default=25)
     alert_webhook_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -148,9 +158,25 @@ class SimulationAccount(Base):
     allocated_balance: Mapped[float] = mapped_column(Float, default=0.0)
     total_realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     leverage: Mapped[float] = mapped_column(Float, default=3.0)
+    run_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class SimulationRun(Base):
+    __tablename__ = "simulation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_number: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    initial_balance: Mapped[float] = mapped_column(Float)
+    current_balance: Mapped[float] = mapped_column(Float)
+    allocated_balance: Mapped[float] = mapped_column(Float, default=0.0)
+    total_realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    leverage: Mapped[float] = mapped_column(Float, default=3.0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class FundingPayment(Base):

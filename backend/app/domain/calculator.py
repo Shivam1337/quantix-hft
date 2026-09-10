@@ -10,8 +10,9 @@ from app.domain.types import MarketSnapshotData, OpportunityData
 class CalculatorConfig:
     fee_schedule: FeeSchedule = field(default_factory=FeeSchedule)
     capacity_fraction: float = 0.05
-    fee_amortization_hours: float = 24 * 30
+    fee_amortization_hours: float = 24
     min_history_cycles: int = 6
+    expected_holding_hours: float = 24
 
 
 def _opportunity_id(symbol: str, long_venue: str, short_venue: str) -> str:
@@ -50,7 +51,8 @@ def _make_opportunity(
     exit_fee_bps = entry_fee_bps
     round_trip_fee_bps = entry_fee_bps + exit_fee_bps
     round_trip_fee = round_trip_fee_bps / 10_000
-    fee_drag = round_trip_fee / config.fee_amortization_hours
+    holding_hours = config.expected_holding_hours or config.fee_amortization_hours
+    fee_drag = round_trip_fee / holding_hours
     net_hourly = gross - fee_drag
     net_apr = net_hourly * 24 * 365 * 100
     fee_breakeven = round_trip_fee / gross if gross > 0 else None
@@ -86,6 +88,18 @@ def _make_opportunity(
         spread_stability_pct=stat.spread_stability_pct,
         funding_rate_source="confirmed_history",
         funding_history_latest_cycle=stat.latest_cycle,
+        expected_holding_hours=holding_hours,
+        recent_gross_hourly_rate=getattr(stat, "recent_gross_hourly", None),
+        recent_net_hourly_rate=(
+            getattr(stat, "recent_gross_hourly", None) - fee_drag
+            if getattr(stat, "recent_gross_hourly", None) is not None
+            else None
+        ),
+        recent_spread_stability_pct=getattr(stat, "recent_spread_stability_pct", None),
+        long_bid_price=long_leg.bid,
+        long_ask_price=long_leg.ask,
+        short_bid_price=short_leg.bid,
+        short_ask_price=short_leg.ask,
     )
 
 

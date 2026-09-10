@@ -1,15 +1,22 @@
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domain.entry import entry_rejection_reason
+from app.domain.entry import entry_rejection_reason, simulation_entry_rejection_reason
 from app.domain.positioning import opportunity_for_position
 from app.domain.types import OpportunityData
-from app.models import FundingPayment, Position, SimulationAccount, TradeLog
+from app.models import Position, SimulationAccount, SimulationRun
 from app.services.positions import PositionService
 from app.services.settings import SettingsService
+from app.services.simulation_accounts import (
+    copy_account_to_run,
+    ensure_account,
+    new_run,
+    reconcile_position,
+    sync_account,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,192 +37,160 @@ class SimulationService:
         self.leverage = leverage
 
     async def get_or_create_account(self, session: AsyncSession) -> SimulationAccount:
-        account = await session.get(SimulationAccount, 1)
-        if account is None:
-            account = SimulationAccount(
-                id=1,
-                initial_balance=self.initial_balance_usd,
-                current_balance=self.initial_balance_usd,
-                allocated_balance=0.0,
-                total_realized_pnl=0.0,
-                leverage=self.leverage,
-            )
-            session.add(account)
-            await session.commit()
-            await session.refresh(account)
-        elif (
-            account.initial_balance in (50.0, 10_000.0)
-            and account.current_balance == account.initial_balance
-            and account.allocated_balance == 0.0
-            and account.total_realized_pnl == 0.0
-        ):
-            # Migrate untouched accounts created with previous default balances.
-            account.initial_balance = self.initial_balance_usd
-            account.current_balance = self.initial_balance_usd
-            account.leverage = self.leverage
-            await session.commit()
-            await session.refresh(account)
-        return account
+        return await ensure_account(session, self.initial_balance_usd, self.leverage)
 
     async def get_account(self) -> SimulationAccount:
         async with self.session_factory() as session:
-            return await self.get_or_create_account(session)
+            account = await self.get_or_create_account(session)
+            await session.commit()
+            await session.refresh(account)
+            return account
 
-    async def reconcile_risk_closures(self, position_ids: list[str]) -> None:
-        """Move newly risk-closed positions into the paper account."""
-        if not position_ids:
-            return
+    async def current_run_id(self) -> int | None:
+        return (await self.get_account()).run_id
+
+    async def sync_account_state(self) -> SimulationAccount:
         async with self.session_factory() as session:
             account = await self.get_or_create_account(session)
-            closed = list(
-                (
-                    await session.execute(
-                        select(Position).where(
-                            Position.id.in_(position_ids), Position.status == "closed"
+            await sync_account(session, account)
+            await session.commit()
+            await session.refresh(account)
+            return account
+
+    async def reconcile_risk_closures(self, position_ids: list[str]) -> None:
+        async with self.session_factory() as session:
+            account = await self.get_or_create_account(session)
+            if position_ids:
+                positions = list(
+                    (
+                        await session.execute(
+                            select(Position).where(
+                                Position.id.in_(position_ids), Position.status == "closed"
+                            )
                         )
-                    )
-                ).scalars()
-            )
-            if not closed:
-                return
-            net_pnl = sum(
-                position.funding_pnl_usd + position.basis_pnl_usd - position.fees_usd
-                for position in closed
-            )
-            account.current_balance += net_pnl
-            account.total_realized_pnl += net_pnl
-            active = list(
-                (
-                    await session.execute(
-                        select(Position).where(Position.status == "open")
-                    )
-                ).scalars()
-            )
-            account.allocated_balance = sum(
-                2
-                * (
-                    position.margin_per_leg_usd
-                    if position.margin_per_leg_usd is not None
-                    else (position.leg_size_usd or position.size_usd)
-                    / max(position.leverage, 1.0)
+                    ).scalars()
                 )
-                for position in active
+                now = datetime.now(timezone.utc)
+                for position in positions:
+                    await self.positions_service.ledger.mark_position(
+                        session, position, None, now
+                    )
+                    await reconcile_position(session, account, position)
+            await sync_account(session, account)
+            await session.commit()
+
+    async def reconcile_closed_funding(self, opportunities: list[OpportunityData]) -> None:
+        """Retry closed positions so late exchange history changes P&L once."""
+        async with self.session_factory() as session:
+            account = await self.get_or_create_account(session)
+            positions = list(
+                (
+                    await session.execute(select(Position).where(Position.status == "closed"))
+                ).scalars()
             )
+            now = datetime.now(timezone.utc)
+            for position in positions:
+                opportunity = opportunity_for_position(position, opportunities)
+                if opportunity is None:
+                    continue
+                await self.positions_service.ledger.mark_position(
+                    session, position, opportunity, now
+                )
+                await reconcile_position(session, account, position)
+            await sync_account(session, account)
             await session.commit()
 
     async def reset_simulation(self) -> SimulationAccount:
         async with self.session_factory() as session:
-            await session.execute(delete(TradeLog))
-            await session.execute(delete(FundingPayment))
-            await session.execute(delete(Position))
             account = await self.get_or_create_account(session)
+            previous = await session.get(SimulationRun, account.run_id)
+            now = datetime.now(timezone.utc)
+            if previous is not None:
+                copy_account_to_run(account, previous)
+                previous.status = "completed"
+                previous.ended_at = now
+            fresh = await new_run(
+                session,
+                SimulationAccount(
+                    initial_balance=self.initial_balance_usd,
+                    current_balance=self.initial_balance_usd,
+                    allocated_balance=0.0,
+                    total_realized_pnl=0.0,
+                    leverage=self.leverage,
+                ),
+            )
             account.initial_balance = self.initial_balance_usd
             account.current_balance = self.initial_balance_usd
             account.allocated_balance = 0.0
             account.total_realized_pnl = 0.0
-            account.updated_at = datetime.now(timezone.utc)
+            account.leverage = self.leverage
+            account.run_id = fresh.id
+            account.updated_at = now
             await session.commit()
             await session.refresh(account)
-            logger.info(
-                "simulation reset completed: balance restored to $%.2f",
-                account.initial_balance,
-            )
+            logger.info("simulation reset started run %s", fresh.run_number)
             return account
 
     async def evaluate_and_trade(self, opportunities: list[OpportunityData]) -> None:
         if not opportunities:
             return
-
         settings = await self.settings_service.get()
         values = list(opportunities)
-        open_positions = await self.positions_service.list_positions(active_only=True)
-
         async with self.session_factory() as session:
             account = await self.get_or_create_account(session)
-
-            # 1. Autonomous exit evaluation
-            for pos in list(open_positions):
-                opp = opportunity_for_position(pos, values)
-                if not opp:
-                    continue
-
-                close_trigger = None
-                if abs(opp.basis_bps) > settings.basis_threshold_bps:
-                    close_trigger = (
-                        "Auto-closed: Basis widened to "
-                        f"{opp.basis_bps:.1f} bps "
-                        f"(threshold: {settings.basis_threshold_bps:.1f})"
-                    )
-                elif pos.negative_hours >= 2:
-                    close_trigger = (
-                        "Auto-closed: Negative funding persisted for "
-                        f"{pos.negative_hours} consecutive hours"
-                    )
-
-                if close_trigger:
-                    closed = await self.positions_service.close_position_with_market(
-                        pos.id, opp, reason=close_trigger
-                    )
-                    net_pnl = closed.funding_pnl_usd + closed.basis_pnl_usd - closed.fees_usd
-                    account.current_balance += net_pnl
-                    account.total_realized_pnl += net_pnl
-                    account.allocated_balance = 0.0
-                    await session.commit()
-                    logger.info(
-                        "auto-closed position %s: %s, net pnl: $%.2f",
-                        pos.id,
-                        close_trigger,
-                        net_pnl,
-                    )
-                    open_positions = [p for p in open_positions if p.id != pos.id]
-
-            # 2. Autonomous entry evaluation (only when no open positions)
-            if not open_positions and account.current_balance >= self.initial_balance_usd:
-                eligible = [
-                    item
-                    for item in values
-                    if entry_rejection_reason(item, settings) is None
-                ]
-
-                if eligible:
-                    # Pick best opportunity considering historical carry
-                    best = eligible[0]
-                    # Keep the account balance as margin, then apply leverage to each leg's
-                    # executable notional. The $1,000 default therefore starts at $500 margin/leg.
-                    leg_margin_usd = account.current_balance / 2.0
-                    leg_size_usd = leg_margin_usd * self.leverage
-                    if best.capacity_usd > 0:
-                        leg_size_usd = min(leg_size_usd, best.capacity_usd)
-                        leg_margin_usd = leg_size_usd / self.leverage
-
-                    if leg_margin_usd >= self.initial_balance_usd / 2.0:
-                        hist_desc = (
-                            f"confirmed history APR: {best.historical_3d_apr_pct:.1f}% "
-                            f"({best.historical_snapshots_count} snaps, "
-                            f"{best.spread_stability_pct:.0f}% stability)"
-                            if best.historical_3d_apr_pct is not None
-                            else "initial spot cycle"
+            open_positions = list(
+                (
+                    await session.execute(
+                        select(Position).where(
+                            Position.status == "open",
+                            or_(
+                                Position.simulation_run_id == account.run_id,
+                                Position.simulation_run_id.is_(None),
+                            ),
                         )
-                        open_reason = (
-                            f"Auto-opened: Top ranked spread {best.symbol} "
-                            f"({best.long_venue}/{best.short_venue}). "
-                            f"Confirmed-rate APR: {best.net_apr_pct:.1f}%, "
-                            f"Basis: {best.basis_bps:.1f} bps. "
-                            f"Funding source: {hist_desc}. "
-                            f"Sized at ${leg_margin_usd:,.2f} margin/leg with "
-                            f"{self.leverage:.1f}x leverage (${leg_size_usd:,.2f} "
-                            f"notional/leg; ${leg_size_usd * 2:,.2f} both legs)."
-                        )
-
-                        await self.positions_service.open_position(
-                            opportunity=best,
-                            size_usd=leg_size_usd,
-                            paper=True,
-                            open_reason=open_reason,
-                            leg_size_usd=leg_size_usd,
-                            margin_per_leg_usd=leg_margin_usd,
-                            leverage=self.leverage,
-                        )
-                        account.allocated_balance = leg_margin_usd * 2.0
-                        await session.commit()
-                        logger.info("auto-opened position on %s: %s", best.symbol, open_reason)
+                    )
+                ).scalars()
+            )
+            if open_positions or simulation_entry_rejection_reason(account, settings):
+                await session.commit()
+                return
+            eligible = [item for item in values if entry_rejection_reason(item, settings) is None]
+            if not eligible:
+                await session.commit()
+                return
+            best = eligible[0]
+            leg_margin_usd = account.current_balance / 2.0
+            leg_size_usd = leg_margin_usd * self.leverage
+            if best.capacity_usd > 0:
+                leg_size_usd = min(leg_size_usd, best.capacity_usd)
+            hist_desc = (
+                f"confirmed history APR: {best.historical_3d_apr_pct:.1f}% "
+                f"({best.historical_snapshots_count} snaps, "
+                f"{best.spread_stability_pct:.0f}% stability)"
+                if best.historical_3d_apr_pct is not None
+                else "initial spot cycle"
+            )
+            open_reason = (
+                f"Auto-opened: Top ranked spread {best.symbol} "
+                f"({best.long_venue}/{best.short_venue}). Confirmed-rate APR: "
+                f"{best.net_apr_pct:.1f}%, fee breakeven: "
+                f"{best.fee_breakeven_hours or 0:.1f}h, expected hold: "
+                f"{best.expected_holding_hours:.1f}h. Funding source: {hist_desc}."
+            )
+            await session.commit()
+            position = await self.positions_service.open_position(
+                best,
+                leg_size_usd,
+                paper=True,
+                open_reason=open_reason,
+                leg_size_usd=leg_size_usd,
+                margin_per_leg_usd=leg_margin_usd,
+                leverage=self.leverage,
+                simulation_run_id=account.run_id,
+            )
+            account.allocated_balance = 2 * (position.margin_per_leg_usd or 0)
+            run = await session.get(SimulationRun, account.run_id)
+            if run:
+                copy_account_to_run(account, run)
+            await session.commit()
+            logger.info("auto-opened position on %s", best.symbol)

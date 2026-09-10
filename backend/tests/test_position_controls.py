@@ -126,3 +126,17 @@ def test_entry_policy_rejects_missing_spread_stability():
     )
     reason = entry_rejection_reason(value, settings())
     assert reason == "waiting for funding spread stability history"
+
+
+def test_entry_policy_rejects_recent_funding_deterioration():
+    value = replace(ranked()[0], recent_net_hourly_rate=-0.000001)
+    reason = entry_rejection_reason(value, settings())
+    assert reason == "recent funding spread does not recover fees"
+
+
+def test_entry_policy_rejects_fee_recovery_longer_than_expected_hold():
+    value = ranked()[0]
+    policy = SimpleNamespace(**settings().__dict__, entry_expected_holding_hours=2)
+    reason = entry_rejection_reason(value, policy)
+    assert reason is not None
+    assert "expected holding horizon" in reason

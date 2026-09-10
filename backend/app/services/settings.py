@@ -19,8 +19,12 @@ class SettingsService:
                     min_open_interest=self.defaults.default_min_open_interest,
                     basis_threshold_bps=self.defaults.basis_threshold_bps,
                     auto_unwind=self.defaults.auto_unwind,
+                    negative_hours_to_unwind=self.defaults.negative_hours_to_unwind,
                     entry_min_history_snapshots=self.defaults.entry_min_history_snapshots,
                     entry_min_spread_stability_pct=self.defaults.entry_min_spread_stability_pct,
+                    entry_expected_holding_hours=self.defaults.entry_expected_holding_hours,
+                    simulation_min_capital_usd=self.defaults.simulation_min_capital_usd,
+                    simulation_max_drawdown_pct=self.defaults.simulation_max_drawdown_pct,
                     alert_webhook_url=self.defaults.alert_webhook_url,
                 )
                 session.add(setting)

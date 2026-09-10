@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -8,6 +8,7 @@ from app.domain.calculator import CalculatorConfig, calculate_opportunities
 from app.domain.types import MarketSnapshotData, OpportunityData
 from app.exchanges.service import ExchangeService
 from app.services.historical_funding import HistoricalFundingService
+from app.services.settings import SettingsService
 from app.services.telemetry import telemetry
 
 SNAPSHOT_CACHE_KEY = "market:snapshots"
@@ -22,6 +23,7 @@ class MarketEngine:
         cache: Cache,
         calculator_config: CalculatorConfig,
         historical_service: HistoricalFundingService | None = None,
+        settings_service: SettingsService | None = None,
     ):
         self.session_factory = session_factory
         self.exchange_service = exchange_service
@@ -30,6 +32,7 @@ class MarketEngine:
         self.historical_service = historical_service or HistoricalFundingService(
             session_factory, min_cycles=calculator_config.min_history_cycles
         )
+        self.settings_service = settings_service
         self.latest: dict[str, OpportunityData] = {}
         self.latest_snapshots: dict[tuple[str, str], MarketSnapshotData] = {}
         self.last_refresh: datetime | None = None
@@ -50,6 +53,14 @@ class MarketEngine:
             ttl_seconds=SNAPSHOT_CACHE_TTL_SECONDS,
         )
         symbols = sorted({snapshot.symbol.upper() for snapshot in snapshots})
+        if self.settings_service:
+            configured = await self.settings_service.get()
+            self.calculator_config = replace(
+                self.calculator_config,
+                expected_holding_hours=configured.entry_expected_holding_hours,
+                min_history_cycles=configured.entry_min_history_snapshots,
+            )
+            self.historical_service.min_cycles = max(2, configured.entry_min_history_snapshots)
         await self.historical_service.sync_confirmed_history(
             self.exchange_service, symbols=symbols
         )

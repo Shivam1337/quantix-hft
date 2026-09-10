@@ -22,6 +22,8 @@ class HistoricalSpreadStats:
     spread_stability_pct: float
     oldest_cycle: datetime
     latest_cycle: datetime
+    recent_gross_hourly: float | None = None
+    recent_spread_stability_pct: float | None = None
 
 
 class HistoricalFundingService:
@@ -155,6 +157,7 @@ class HistoricalFundingService:
                     spreads = [short - long for long, short in zip(long_rates, short_rates)]
                     gross_hourly = _median(spreads)
                     stability = sum(spread >= 0 for spread in spreads) / len(spreads) * 100
+                    recent_spreads = spreads[-min(6, len(spreads)) :]
                     stats_map[(symbol, long_venue, short_venue)] = HistoricalSpreadStats(
                         long_venue=long_venue,
                         short_venue=short_venue,
@@ -166,6 +169,12 @@ class HistoricalFundingService:
                         spread_stability_pct=stability,
                         oldest_cycle=cycles[0],
                         latest_cycle=cycles[-1],
+                        recent_gross_hourly=_median(recent_spreads),
+                        recent_spread_stability_pct=(
+                            sum(spread >= 0 for spread in recent_spreads)
+                            / len(recent_spreads)
+                            * 100
+                        ),
                     )
         return stats_map
 

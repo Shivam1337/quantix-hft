@@ -17,7 +17,7 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
         <div className="flex items-center gap-2">
           {onReset && (
             <button className="button button-danger text-xs py-1 px-2.5" onClick={onReset}>
-              Reset Trades & Balance
+              Start New Simulation Run
             </button>
           )}
           <span className="count-badge">{positions.length}</span>
@@ -47,7 +47,12 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
           const settledFunding = position.settled_funding_pnl_usd ?? 0;
           const accruedFunding = position.accrued_funding_pnl_usd ?? 0;
           const fees = position.fees_usd ?? 0;
-          const netPnl = fundingPnl + liveBasisPnl - fees;
+          const grossPnl = position.gross_pnl_usd ?? fundingPnl + liveBasisPnl;
+          const netPnl = position.net_pnl_usd ?? grossPnl - fees;
+          const estimatedCloseFee = position.estimated_close_fee_usd ?? (
+            position.status === "open" ? legNotional * (opp?.exit_fee_bps ?? 0) / 10_000 : 0
+          );
+          const estimatedNetPnl = position.estimated_net_pnl_if_closed_usd ?? netPnl - estimatedCloseFee;
 
           return (
             <div className="position-row p-4" key={position.id}>
@@ -155,9 +160,13 @@ export function PositionTable({ positions, opportunities = [], onReset }: Props)
               <div className="mt-2 flex items-center justify-between border-t border-slate-800/50 pt-2">
                 <div className="flex items-center gap-3">
                   <span className={netPnl >= 0 ? "text-emerald-300 font-mono font-bold text-base" : "text-rose-300 font-mono font-bold text-base"}>
-                    Net PnL ${netPnl.toFixed(2)}{" "}
-                    <small className="text-slate-500 font-normal text-xs">(fees ${fees.toFixed(2)})</small>
+                    Net PnL ${netPnl.toFixed(2)}
                   </span>
+                  <small className="text-slate-500 font-normal text-xs self-center">
+                    Gross ${grossPnl.toFixed(2)} · paid fees ${fees.toFixed(2)} · est. close fee ${estimatedCloseFee.toFixed(2)} · est. net if closed ${estimatedNetPnl.toFixed(2)} · proceeds ${(
+                      position.estimated_net_proceeds_usd ?? estimatedNetPnl + 2 * legMargin
+                    ).toFixed(2)}
+                  </small>
                   <span className="text-slate-400 text-xs font-mono">
                     Basis PnL:{" "}
                     <span className={liveBasisPnl >= 0 ? "text-emerald-400 font-medium" : "text-rose-400 font-medium"}>

@@ -56,11 +56,17 @@ class Settings(BaseSettings):
     basis_threshold_bps: float = 200.0
     entry_min_history_snapshots: int = Field(default=6, ge=2, le=100)
     entry_min_spread_stability_pct: float = Field(default=60.0, ge=0, le=100)
+    entry_expected_holding_hours: float = Field(default=24.0, gt=0, le=8_760)
     capacity_fraction: float = Field(default=0.05, gt=0, le=1)
     auto_unwind: bool = True
+    negative_hours_to_unwind: int = Field(default=2, ge=1, le=168)
     live_trading_enabled: bool = False
     simulation_initial_balance_usd: float = Field(default=1_000.0, gt=0)
+    simulation_min_capital_usd: float = Field(default=100.0, gt=0)
+    simulation_max_drawdown_pct: float = Field(default=25.0, ge=0, le=100)
     simulation_leverage: float = Field(default=3.0, ge=1, le=100)
+    paper_slippage_bps: float = Field(default=1.0, ge=0, le=100)
+    paper_post_only_fill_ratio: float = Field(default=0.90, gt=0, le=1)
     alert_webhook_url: str | None = None
 
     @property

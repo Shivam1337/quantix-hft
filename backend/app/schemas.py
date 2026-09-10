@@ -36,6 +36,14 @@ class OpportunityRead(ReadModel):
     spread_stability_pct: float | None = None
     funding_rate_source: str = "confirmed_history"
     funding_history_latest_cycle: datetime | None = None
+    expected_holding_hours: float = 24.0
+    recent_gross_hourly_rate: float | None = None
+    recent_net_hourly_rate: float | None = None
+    recent_spread_stability_pct: float | None = None
+    long_bid_price: float | None = None
+    long_ask_price: float | None = None
+    short_bid_price: float | None = None
+    short_ask_price: float | None = None
 
 
 class FundingSettlementRead(ReadModel):
@@ -93,6 +101,8 @@ class SimulatorResponse(BaseModel):
     leverage: float
     leg_margin_usd: float
     leg_notional_usd: float
+    expected_filled_leg_notional_usd: float
+    expected_fill_ratio: float
     position_notional_usd: float
     projected_hourly_cashflow_usd: float
     projected_period_funding_usd: float
@@ -100,6 +110,7 @@ class SimulatorResponse(BaseModel):
     projected_net_profit_usd: float
     estimated_entry_fees_usd: float
     estimated_exit_fees_usd: float
+    estimated_slippage_usd: float
     fee_breakeven_hours: float | None
     projected_return_pct: float
 
@@ -110,8 +121,12 @@ class SettingsRead(ReadModel):
     min_open_interest: float
     basis_threshold_bps: float
     auto_unwind: bool
+    negative_hours_to_unwind: int
     entry_min_history_snapshots: int
     entry_min_spread_stability_pct: float
+    entry_expected_holding_hours: float
+    simulation_min_capital_usd: float
+    simulation_max_drawdown_pct: float
     alert_webhook_url: str | None
 
 
@@ -120,8 +135,12 @@ class SettingsUpdate(BaseModel):
     min_open_interest: float | None = Field(default=None, ge=0)
     basis_threshold_bps: float | None = Field(default=None, gt=0, le=10_000)
     auto_unwind: bool | None = None
+    negative_hours_to_unwind: int | None = Field(default=None, ge=1, le=168)
     entry_min_history_snapshots: int | None = Field(default=None, ge=2, le=100)
     entry_min_spread_stability_pct: float | None = Field(default=None, ge=0, le=100)
+    entry_expected_holding_hours: float | None = Field(default=None, gt=0, le=8_760)
+    simulation_min_capital_usd: float | None = Field(default=None, gt=0)
+    simulation_max_drawdown_pct: float | None = Field(default=None, ge=0, le=100)
     alert_webhook_url: str | None = None
 
 
@@ -192,6 +211,7 @@ class SimulationAccountRead(ReadModel):
     allocated_balance: float
     total_realized_pnl: float
     leverage: float
+    run_id: int | None = None
     updated_at: datetime
 
 
@@ -210,8 +230,6 @@ class WalletAssetRead(BaseModel):
     total: float
     available: float | None = None
     locked: float | None = None
-
-
 class WalletBalanceRead(BaseModel):
     exchange_id: str
     exchange_name: str

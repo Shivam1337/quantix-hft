@@ -17,7 +17,10 @@ const VENUES = [
 
 export function DashboardPage(p: Props) {
   const topOpp = p.opportunities[0];
-  const totalPnl = p.positions.reduce((s, i) => s + i.funding_pnl_usd + i.basis_pnl_usd, 0);
+  const totalPnl = p.positions.reduce(
+    (s, i) => s + (i.net_pnl_usd ?? i.funding_pnl_usd + i.basis_pnl_usd - i.fees_usd),
+    0
+  );
   const totalCapital = p.positions.reduce((s, i) => s + i.size_usd, 0);
 
   return (
@@ -83,11 +86,11 @@ export function DashboardPage(p: Props) {
               <p className="mt-0.5 text-[11px] text-slate-500">{p.positions.length} active positions</p>
             </div>
             <div className="rounded-lg border border-slate-800/80 bg-slate-900/40 p-3.5">
-              <p className="text-xs text-slate-400">Total Portfolio PnL</p>
+              <p className="text-xs text-slate-400">Portfolio Net PnL</p>
               <p className={`mt-1 text-2xl font-bold ${totalPnl >= 0 ? "text-cyan" : "text-amber-400"}`}>
                 ${totalPnl.toFixed(2)}
               </p>
-              <p className="mt-0.5 text-[11px] text-slate-500">Funding + basis capture</p>
+              <p className="mt-0.5 text-[11px] text-slate-500">After paid fees</p>
             </div>
           </div>
         </section>

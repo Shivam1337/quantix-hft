@@ -5,6 +5,14 @@ import pytest
 from app.models import FundingPayment, Position, SimulationAccount
 
 
+def market_only_opportunity(values):
+    return next(
+        item
+        for item in values
+        if item.long_order_type == "market" and item.short_order_type == "market"
+    )
+
+
 @pytest.mark.asyncio
 async def test_simulation_account_and_reset(client):
     # Check initial account
@@ -18,7 +26,11 @@ async def test_simulation_account_and_reset(client):
 
     # Open a test position to simulate trades
     radar = await client.get("/api/v1/opportunities?refresh=true")
-    opp = radar.json()[0]
+    opp = next(
+        item
+        for item in radar.json()
+        if item["long_order_type"] == "market" and item["short_order_type"] == "market"
+    )
     opened = await client.post(
         "/api/v1/positions/open",
         json={"opportunity_id": opp["id"], "capital_usd": 2_000, "paper": True},
@@ -27,6 +39,11 @@ async def test_simulation_account_and_reset(client):
 
     positions_res = await client.get("/api/v1/positions")
     assert len(positions_res.json()) == 1
+    position_id = positions_res.json()[0]["id"]
+    closed = await client.post(
+        f"/api/v1/positions/{position_id}/close", json={"reason": "before reset"}
+    )
+    assert closed.json()["close_reason"] == "before reset"
 
     # Call reset endpoint
     reset_res = await client.post("/api/v1/simulation/reset")
@@ -36,11 +53,14 @@ async def test_simulation_account_and_reset(client):
     assert reset_data["account"]["current_balance"] == 1_000.0
     assert reset_data["account"]["allocated_balance"] == 0.0
 
-    # Positions and logs should be wiped
+    # The new run is empty, while the prior run's audit history remains queryable.
     positions_after = await client.get("/api/v1/positions")
     assert len(positions_after.json()) == 0
+    history_after = await client.get("/api/v1/positions?active_only=false")
+    assert len(history_after.json()) == 1
+    assert history_after.json()[0]["close_reason"] == "before reset"
     logs_after = await client.get("/api/v1/logs")
-    assert len(logs_after.json()) == 0
+    assert len(logs_after.json()) == 4
 
 
 @pytest.mark.asyncio
@@ -113,18 +133,17 @@ async def test_autonomous_simulation_sizing_and_reasoning(client):
     assert len(open_positions) == 1
     pos = open_positions[0]
     
-    # System uses $500 margin on each leg and 3x leverage for $1,500 notional.
+    # Paper execution expects a 90% post-only fill before hedging the other leg.
     account = await app.state.simulation.get_account()
-    expected_margin = account.initial_balance / 2.0
+    expected_margin = account.initial_balance / 2.0 * 0.9
     expected_leg_size = expected_margin * account.leverage
     assert pos.margin_per_leg_usd == pytest.approx(expected_margin)
     assert pos.leg_size_usd == pytest.approx(expected_leg_size)
     assert pos.leverage == pytest.approx(3.0)
-    assert account.allocated_balance == pytest.approx(1_000.0)
+    assert account.allocated_balance == pytest.approx(expected_margin * 2)
     assert pos.open_reason is not None
     assert "Auto-opened" in pos.open_reason
-    assert "$500.00 margin/leg" in pos.open_reason
-    assert "$1,500.00 notional/leg" in pos.open_reason
+    assert "fee breakeven" in pos.open_reason
 
 
 @pytest.mark.asyncio
@@ -156,7 +175,9 @@ async def test_unconfirmed_negative_tick_does_not_churn_position(client):
 async def test_confirmed_negative_funding_closes_after_two_cycles(client):
     app = client._transport.app
     opportunities = await app.state.market.list_opportunities(refresh=True)
-    position = await app.state.positions.open_position(opportunities[0], 1_000, paper=True)
+    position = await app.state.positions.open_position(
+        market_only_opportunity(opportunities), 1_000, paper=True
+    )
 
     async with app.state.session_factory() as session:
         stored = await session.get(Position, position.id)
@@ -194,7 +215,9 @@ async def test_confirmed_negative_funding_closes_after_two_cycles(client):
 async def test_risk_closure_reconciles_paper_account(client):
     app = client._transport.app
     opportunities = await app.state.market.list_opportunities(refresh=True)
-    position = await app.state.positions.open_position(opportunities[0], 1_000, paper=True)
+    position = await app.state.positions.open_position(
+        market_only_opportunity(opportunities), 1_000, paper=True
+    )
 
     async with app.state.session_factory() as session:
         stored = await session.get(Position, position.id)

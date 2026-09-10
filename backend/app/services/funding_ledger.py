@@ -4,7 +4,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.types import OpportunityData
-from app.models import FundingPayment, FundingPendingCycle, FundingSettlement, Position
+from app.models import FundingPayment, FundingPendingCycle, FundingSettlement, Position, TradeLog
 from app.services.funding_metrics import apply_confirmed_metrics
 
 
@@ -15,10 +15,15 @@ class FundingLedger:
         self,
         session: AsyncSession,
         position: Position,
-        opportunity: OpportunityData,
+        opportunity: OpportunityData | None,
         now: datetime,
     ) -> None:
-        current_cycle = self._cycle(now)
+        effective_end = (
+            self._aware(position.closed_at)
+            if position.status != "open" and position.closed_at
+            else now
+        )
+        current_cycle = self._cycle(effective_end)
         last_cycle = (
             self._aware(position.last_funding_cycle)
             if position.last_funding_cycle
@@ -36,25 +41,37 @@ class FundingLedger:
             position.last_funding_cycle = cycle
             cycle += timedelta(hours=1)
 
+        has_confirmed = await session.scalar(
+            select(FundingPayment.id)
+            .where(
+                FundingPayment.position_id == position.id,
+                FundingPayment.rate_source == "exchange_history",
+                FundingPayment.settlement_type == "confirmed",
+            )
+            .limit(1)
+        )
         # A missing confirmation is not an estimate. It contributes zero to
         # P&L until the exchange history endpoint confirms the cycle.
-        position.accrued_long_funding_pnl_usd = 0.0
-        position.accrued_short_funding_pnl_usd = 0.0
-        position.accrued_funding_pnl_usd = 0.0
-        position.long_funding_pnl_usd = position.settled_long_funding_pnl_usd or 0.0
-        position.short_funding_pnl_usd = position.settled_short_funding_pnl_usd or 0.0
-        position.funding_pnl_usd = position.long_funding_pnl_usd + position.short_funding_pnl_usd
-        position.current_long_price = opportunity.long_mark_price
-        position.current_short_price = opportunity.short_mark_price
-        position.current_basis_bps = opportunity.basis_bps
-        long_move = (
-            opportunity.long_mark_price - position.long_entry_price
-        ) / position.long_entry_price
-        short_move = (
-            position.short_entry_price - opportunity.short_mark_price
-        ) / position.short_entry_price
-        position.basis_pnl_usd = (long_move + short_move) * position.size_usd
-        await apply_confirmed_metrics(session, position)
+        if position.status == "open" or has_confirmed is not None:
+            position.accrued_long_funding_pnl_usd = 0.0
+            position.accrued_short_funding_pnl_usd = 0.0
+            position.accrued_funding_pnl_usd = 0.0
+            position.long_funding_pnl_usd = position.settled_long_funding_pnl_usd or 0.0
+            position.short_funding_pnl_usd = position.settled_short_funding_pnl_usd or 0.0
+            position.funding_pnl_usd = (
+                position.long_funding_pnl_usd + position.short_funding_pnl_usd
+            )
+        if opportunity is not None and (position.status == "open" or not position.closed_at):
+            position.current_long_price = opportunity.long_mark_price
+            position.current_short_price = opportunity.short_mark_price
+            position.current_basis_bps = opportunity.basis_bps
+            long_price = opportunity.long_mark_price
+            short_price = opportunity.short_mark_price
+            long_move = (long_price - position.long_entry_price) / position.long_entry_price
+            short_move = (position.short_entry_price - short_price) / position.short_entry_price
+            position.basis_pnl_usd = (long_move + short_move) * position.size_usd
+        if position.status == "open" or has_confirmed is not None:
+            await apply_confirmed_metrics(session, position)
         position.updated_at = now
 
     async def _settle_cycle(
@@ -95,7 +112,7 @@ class FundingLedger:
                 FundingPendingCycle.cycle_at == cycle,
             )
         )
-        leg_size = position.leg_size_usd or position.size_usd
+        leg_size = await self._leg_size_at_cycle(session, position, cycle)
         long_payment = -long_settlement.funding_rate * leg_size
         short_payment = short_settlement.funding_rate * leg_size
         session.add(
@@ -125,6 +142,36 @@ class FundingLedger:
         )
         position.accrual_started_at = cycle
         return True
+
+    async def _leg_size_at_cycle(
+        self, session: AsyncSession, position: Position, cycle: datetime
+    ) -> float:
+        logs = list(
+            (
+                await session.execute(
+                    select(TradeLog).where(
+                        TradeLog.position_id == position.id,
+                        TradeLog.created_at <= cycle,
+                    )
+                )
+            ).scalars()
+        )
+        opened = [log.size_usd for log in logs if log.phase == "open"]
+        closed = [log.size_usd for log in logs if log.phase == "close"]
+        if opened:
+            opened_size = max(opened)
+            close_at = self._aware(position.closed_at) if position.closed_at else None
+            if (
+                position.status != "open"
+                and close_at is not None
+                and cycle < close_at
+                and abs((position.size_usd or 0.0) - opened_size) <= 1e-9
+            ):
+                return opened_size
+            # Both legs of a paired fill are logged; use one leg's size for
+            # the opening notional and half the close-log total for reductions.
+            return max(0.0, opened_size - sum(closed) / 2.0)
+        return position.leg_size_usd or position.size_usd
 
     async def _cycle_settlement(
         self,

@@ -113,10 +113,9 @@ function App() {
     () => filteredOpportunities[0]?.net_apr_pct ?? opportunities[0]?.net_apr_pct ?? 0,
     [filteredOpportunities, opportunities]
   );
-  const totalPnl = positions.reduce(
-    (sum, item) => sum + (item.funding_pnl_usd || 0) + (item.basis_pnl_usd || 0),
-    0
-  );
+  const grossPnl = positions.reduce((sum, item) => sum + (item.gross_pnl_usd ?? item.funding_pnl_usd + item.basis_pnl_usd), 0);
+  const netPnl = positions.reduce((sum, item) => sum + (item.net_pnl_usd ?? item.funding_pnl_usd + item.basis_pnl_usd - item.fees_usd), account?.total_realized_pnl ?? 0);
+  const estimatedNetPnl = positions.reduce((sum, item) => sum + (item.estimated_net_pnl_if_closed_usd ?? item.net_pnl_usd ?? 0), 0);
 
   const resetSim = async () => {
     try {
@@ -198,14 +197,19 @@ function App() {
 
           {(currentPath === "/opportunities" || currentPath === "/positions") && (
             <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <MetricCard label="Best net APR" value={`${topApr.toFixed(1)}%`} detail="after 30d fee drag" />
+              <MetricCard label="Best net APR" value={`${topApr.toFixed(1)}%`} detail={`after ${settings?.entry_expected_holding_hours ?? 24}h fee drag`} />
               <MetricCard
                 label="Account balance"
                 value={`$${(account?.current_balance ?? 1000).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
                 detail={`Initial: $${(account?.initial_balance ?? 1000).toLocaleString()} · $${((account?.initial_balance ?? 1000) / 2).toLocaleString()} margin/leg · ${account?.leverage ?? 3}x`}
                 accent="white"
               />
-              <MetricCard label="Portfolio PnL" value={`$${totalPnl.toFixed(2)}`} detail="funding + basis" accent={totalPnl >= 0 ? "cyan" : "amber"} />
+              <MetricCard
+                label="Portfolio Net PnL"
+                value={`$${netPnl.toFixed(2)}`}
+                detail={`Realized + open net · open gross $${grossPnl.toFixed(2)} · est. close $${estimatedNetPnl.toFixed(2)}`}
+                accent={netPnl >= 0 ? "cyan" : "amber"}
+              />
             </div>
           )}
 

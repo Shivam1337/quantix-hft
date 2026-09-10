@@ -15,11 +15,16 @@ class RiskEngine:
         self.config = config
 
     def evaluate(
-        self, net_apr_pct: float | None, basis_bps: float, negative_hours: int
+        self,
+        net_apr_pct: float | None,
+        basis_bps: float,
+        negative_hours: int,
+        config: RiskConfig | None = None,
     ) -> RiskDecision:
-        basis_breach = abs(basis_bps) > self.config.basis_threshold_bps
+        active = config or self.config
+        basis_breach = abs(basis_bps) > active.basis_threshold_bps
         funding_flip = (
-            negative_hours >= self.config.negative_hours_to_unwind
+            negative_hours >= active.negative_hours_to_unwind
             and net_apr_pct is not None
             and net_apr_pct < 0
         )
@@ -27,12 +32,12 @@ class RiskEngine:
         if basis_breach:
             reason = (
                 f"basis divergence {basis_bps:.2f} bps exceeds "
-                f"{self.config.basis_threshold_bps:.2f} bps"
+                f"{active.basis_threshold_bps:.2f} bps"
             )
         elif funding_flip:
             reason = f"negative net APR persisted for {negative_hours} funding hours"
         return RiskDecision(
-            should_unwind=self.config.auto_unwind and (basis_breach or funding_flip),
+            should_unwind=active.auto_unwind and (basis_breach or funding_flip),
             basis_breach=basis_breach,
             funding_flip=funding_flip,
             reason=reason,

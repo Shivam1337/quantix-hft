@@ -24,6 +24,11 @@ async def test_health_and_opportunity_radar(client):
 async def test_simulator_open_close_and_logs(client):
     radar = await client.get("/api/v1/opportunities?refresh=true")
     opportunity = radar.json()[0]
+    close_opportunity = next(
+        item
+        for item in radar.json()
+        if item["long_order_type"] == "market" and item["short_order_type"] == "market"
+    )
     simulation = await client.post(
         "/api/v1/simulator",
         json={"opportunity_id": opportunity["id"], "capital_usd": 50, "holding_days": 30},
@@ -34,11 +39,13 @@ async def test_simulator_open_close_and_logs(client):
     assert simulation_data["leg_margin_usd"] == pytest.approx(25)
     assert simulation_data["leg_notional_usd"] == pytest.approx(75)
     assert simulation_data["position_notional_usd"] == pytest.approx(150)
+    assert simulation_data["expected_fill_ratio"] == pytest.approx(0.9)
+    assert simulation_data["expected_filled_leg_notional_usd"] == pytest.approx(67.5)
     assert simulation_data["estimated_entry_fees_usd"] == pytest.approx(
-        75 * opportunity["entry_fee_bps"] / 10_000
+        67.5 * opportunity["entry_fee_bps"] / 10_000
     )
     assert simulation_data["estimated_exit_fees_usd"] == pytest.approx(
-        75 * opportunity["exit_fee_bps"] / 10_000
+        67.5 * opportunity["exit_fee_bps"] / 10_000
     )
     assert simulation_data["estimated_round_trip_fees_usd"] == pytest.approx(
         simulation_data["estimated_entry_fees_usd"] + simulation_data["estimated_exit_fees_usd"]
@@ -46,16 +53,21 @@ async def test_simulator_open_close_and_logs(client):
     assert simulation_data["projected_net_profit_usd"] == pytest.approx(
         simulation_data["projected_period_funding_usd"]
         - simulation_data["estimated_round_trip_fees_usd"]
+        - simulation_data["estimated_slippage_usd"]
     )
 
     opened = await client.post(
         "/api/v1/positions/open",
-        json={"opportunity_id": opportunity["id"], "capital_usd": 1_000, "paper": True},
+        json={
+            "opportunity_id": close_opportunity["id"],
+            "capital_usd": 1_000,
+            "paper": True,
+        },
     )
     assert opened.status_code == 201
     position_id = opened.json()["id"]
     assert opened.json()["entry_fee_usd"] == pytest.approx(
-        1_000 * opportunity["entry_fee_bps"] / 10_000
+        opened.json()["size_usd"] * close_opportunity["entry_fee_bps"] / 10_000
     )
     assert opened.json()["exit_fee_usd"] == 0
     assert opened.json()["fees_usd"] == opened.json()["entry_fee_usd"]
@@ -66,7 +78,7 @@ async def test_simulator_open_close_and_logs(client):
     assert closed.status_code == 200
     assert closed.json()["status"] == "closed"
     assert closed.json()["exit_fee_usd"] == pytest.approx(
-        1_000 * opportunity["exit_fee_bps"] / 10_000
+        opened.json()["size_usd"] * close_opportunity["exit_fee_bps"] / 10_000
     )
     assert closed.json()["fees_usd"] == pytest.approx(
         closed.json()["entry_fee_usd"] + closed.json()["exit_fee_usd"]
@@ -76,9 +88,9 @@ async def test_simulator_open_close_and_logs(client):
     values = logs.json()
     assert len(values) == 4
     assert {value["phase"] for value in values} == {"open", "close"}
-    assert all(value["symbol"] == opportunity["symbol"] for value in values)
+    assert all(value["symbol"] == close_opportunity["symbol"] for value in values)
     assert all(
-        value["fee_usd"] == pytest.approx(1_000 * value["fee_bps"] / 10_000)
+        value["fee_usd"] == pytest.approx(value["size_usd"] * value["fee_bps"] / 10_000)
         for value in values
     )
     assert sum(value["fee_usd"] for value in values if value["phase"] == "open") == pytest.approx(

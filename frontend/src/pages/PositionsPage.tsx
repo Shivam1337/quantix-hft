@@ -74,7 +74,7 @@ export function PositionsPage({ positions, opportunities = [], logs, account, on
               onClick={handleReset}
               className="button button-danger text-xs font-semibold py-1.5 px-3"
             >
-              Reset All Trades & Balance
+              Start New Run (Keep History)
             </button>
           )}
         </div>

@@ -34,7 +34,8 @@ def orient_opportunity(
     long_rate = opportunity.short_funding_rate
     short_rate = opportunity.long_funding_rate
     gross = short_rate - long_rate
-    fee_drag = opportunity.round_trip_fee_bps / 10_000 / (24 * 30)
+    holding_hours = getattr(opportunity, "expected_holding_hours", 24.0)
+    fee_drag = opportunity.round_trip_fee_bps / 10_000 / holding_hours
     net_hourly = gross - fee_drag
     round_trip_fee = opportunity.round_trip_fee_bps / 10_000
     return replace(
@@ -53,6 +54,22 @@ def orient_opportunity(
         long_mark_price=opportunity.short_mark_price,
         short_mark_price=opportunity.long_mark_price,
         fee_breakeven_hours=round_trip_fee / gross if gross > 0 else None,
+        expected_holding_hours=holding_hours,
+        recent_gross_hourly_rate=(
+            -opportunity.recent_gross_hourly_rate
+            if opportunity.recent_gross_hourly_rate is not None
+            else None
+        ),
+        recent_net_hourly_rate=(
+            -opportunity.recent_net_hourly_rate
+            if opportunity.recent_net_hourly_rate is not None
+            else None
+        ),
+        recent_spread_stability_pct=opportunity.recent_spread_stability_pct,
+        long_bid_price=opportunity.short_bid_price,
+        long_ask_price=opportunity.short_ask_price,
+        short_bid_price=opportunity.long_bid_price,
+        short_ask_price=opportunity.long_ask_price,
         historical_3d_apr_pct=(
             -abs(opportunity.historical_3d_apr_pct)
             if opportunity.historical_3d_apr_pct is not None

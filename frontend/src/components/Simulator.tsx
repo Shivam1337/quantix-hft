@@ -42,7 +42,7 @@ export function Simulator({
             onClick={onReset}
             className="button button-danger text-xs font-semibold py-1.5 px-3 shadow-lg shadow-rose-950/30"
           >
-            Reset Trades & Balance
+            Start New Run (Keep History)
           </button>
         </div>
 
@@ -146,6 +146,14 @@ export function Simulator({
             <div>
               <span>Round-trip fees</span>
               <strong>${result.estimated_round_trip_fees_usd.toFixed(2)}</strong>
+            </div>
+            <div>
+              <span>Expected fill</span>
+              <strong>{(result.expected_fill_ratio * 100).toFixed(0)}%</strong>
+            </div>
+            <div>
+              <span>Slippage</span>
+              <strong>${result.estimated_slippage_usd.toFixed(2)}</strong>
             </div>
             <div>
               <span>Position notional</span>

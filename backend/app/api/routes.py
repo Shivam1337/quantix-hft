@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import select
 
-from app.api.position_schemas import FundingPendingCycleRead, PositionRead
+from app.api.position_schemas import FundingPendingCycleRead, PositionRead, to_position_read
 from app.domain.entry import entry_rejection_reason
 from app.domain.positioning import opportunity_for_position
 from app.models import FundingPendingCycle, Position, TradeLog
@@ -16,8 +16,6 @@ from app.schemas import (
     SettingsUpdate,
     SimulationAccountRead,
     SimulationResetResponse,
-    SimulatorRequest,
-    SimulatorResponse,
     TradeLogRead,
 )
 
@@ -73,8 +71,16 @@ async def refresh(request: Request) -> RefreshRead:
 
 @router.get("/positions", response_model=list[PositionRead])
 async def positions(request: Request, active_only: bool = True) -> list[PositionRead]:
-    values = await request.app.state.positions.list_positions(active_only=active_only)
-    return [PositionRead.model_validate(value) for value in values]
+    account = await request.app.state.simulation.get_account()
+    values = await request.app.state.positions.list_positions(
+        active_only=active_only,
+        simulation_run_id=account.run_id if active_only else None,
+    )
+    opportunities = await request.app.state.market.list_opportunities()
+    return [
+        to_position_read(value, opportunity_for_position(value, opportunities))
+        for value in values
+    ]
 
 
 @router.get("/funding-history", response_model=list[FundingSettlementRead])
@@ -118,12 +124,14 @@ async def open_position(request: Request, body: OpenPositionRequest) -> Position
             status_code=409, detail="opportunity exceeds the basis safety threshold"
         )
     try:
+        account = await request.app.state.simulation.get_account()
         value = await request.app.state.positions.open_position(
-            opportunity, body.capital_usd, body.paper
+            opportunity, body.capital_usd, body.paper, simulation_run_id=account.run_id
         )
+        await request.app.state.simulation.sync_account_state()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return PositionRead.model_validate(value)
+    return to_position_read(value, opportunity)
 
 
 @router.post("/positions/{position_id}/close", response_model=PositionRead)
@@ -139,44 +147,16 @@ async def close_position(
         value = await request.app.state.positions.close_position_with_market(
             position_id, opportunity, body.reason
         )
+        await request.app.state.simulation.reconcile_risk_closures([position_id])
+        await request.app.state.simulation.reconcile_closed_funding(
+            [opportunity] if opportunity is not None else []
+        )
+        await request.app.state.simulation.sync_account_state()
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return PositionRead.model_validate(value)
-
-
-@router.post("/simulator", response_model=SimulatorResponse)
-async def simulator(request: Request, body: SimulatorRequest) -> SimulatorResponse:
-    opportunity = await request.app.state.market.get_opportunity(body.opportunity_id)
-    if opportunity is None:
-        raise HTTPException(status_code=404, detail="opportunity not found; refresh market data")
-    hours = body.holding_days * 24
-    leg_margin = body.capital_usd / 2.0
-    leg_notional = leg_margin * body.leverage
-    hourly_cashflow = opportunity.gross_hourly_rate * leg_notional
-    funding = hourly_cashflow * hours
-    entry_fees = opportunity.entry_fee_bps / 10_000 * leg_notional
-    exit_fees = opportunity.exit_fee_bps / 10_000 * leg_notional
-    fees = entry_fees + exit_fees
-    net_profit = funding - entry_fees - exit_fees
-    return SimulatorResponse(
-        opportunity_id=opportunity.id,
-        capital_usd=body.capital_usd,
-        holding_days=body.holding_days,
-        leverage=body.leverage,
-        leg_margin_usd=leg_margin,
-        leg_notional_usd=leg_notional,
-        position_notional_usd=leg_notional * 2.0,
-        projected_hourly_cashflow_usd=hourly_cashflow,
-        projected_period_funding_usd=funding,
-        estimated_round_trip_fees_usd=fees,
-        estimated_entry_fees_usd=entry_fees,
-        estimated_exit_fees_usd=exit_fees,
-        projected_net_profit_usd=net_profit,
-        fee_breakeven_hours=opportunity.fee_breakeven_hours,
-        projected_return_pct=net_profit / body.capital_usd * 100,
-    )
+    return to_position_read(value, opportunity)
 
 
 @router.get("/settings", response_model=SettingsRead)
@@ -189,6 +169,7 @@ async def update_settings(request: Request, body: SettingsUpdate) -> SettingsRea
     value = await request.app.state.settings_service.update(body.model_dump(exclude_unset=True))
     request.app.state.risk.config = request.app.state.risk.config.__class__(
         basis_threshold_bps=value.basis_threshold_bps,
+        negative_hours_to_unwind=value.negative_hours_to_unwind,
         auto_unwind=value.auto_unwind,
     )
     request.app.state.alerts.webhook_url = value.alert_webhook_url
@@ -223,7 +204,10 @@ async def reset_simulation(request: Request) -> SimulationResetResponse:
     account = await request.app.state.simulation.reset_simulation()
     return SimulationResetResponse(
         status="ok",
-        message="Simulation reset successfully. Account balance restored and trades wiped.",
+        message=(
+            "Simulation reset successfully. A new run started; prior positions, funding, "
+            "settings, and exit reasons were retained."
+        ),
         account=SimulationAccountRead.model_validate(account),
     )
 

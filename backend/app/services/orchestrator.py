@@ -3,6 +3,8 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from app.config import Settings
+from app.domain.pnl import position_pnl
+from app.domain.positioning import opportunity_for_position
 from app.services.market import MarketEngine
 from app.services.positions import PositionService
 from app.services.simulation import SimulationService
@@ -28,9 +30,11 @@ class Orchestrator:
 
     async def run_once(self) -> int:
         opportunities = await self.market.refresh()
-        closed_ids = await self.positions.evaluate_risk(opportunities)
+        run_id = await self.simulation.current_run_id() if self.simulation else None
+        closed_ids = await self.positions.evaluate_risk(opportunities, simulation_run_id=run_id)
         if self.simulation:
             await self.simulation.reconcile_risk_closures(closed_ids)
+            await self.simulation.reconcile_closed_funding(opportunities)
             await self.simulation.evaluate_and_trade(opportunities)
         await self._publish(opportunities)
         return len(opportunities)
@@ -38,7 +42,10 @@ class Orchestrator:
     async def _publish(self, opportunities) -> None:
         if self.broadcast:
             opps = opportunities or list(self.market.latest.values())
-            positions = await self.positions.list_positions(active_only=False)
+            run_id = await self.simulation.current_run_id() if self.simulation else None
+            positions = await self.positions.list_positions(
+                active_only=False, simulation_run_id=run_id
+            )
             account_data = None
             if self.simulation:
                 try:
@@ -64,7 +71,10 @@ class Orchestrator:
                             self.market.snapshot_to_dict(snapshot)
                             for snapshot in self.market.latest_snapshots.values()
                         ],
-                        "positions": [self._position_dict(item) for item in positions],
+                        "positions": [
+                            self._position_dict(item, opportunity_for_position(item, opps))
+                            for item in positions
+                        ],
                         "account": account_data,
                     },
                 }
@@ -114,9 +124,13 @@ class Orchestrator:
                 except (TimeoutError, StopAsyncIteration):
                     pass
                 opportunities = await self.market.ingest(batch)
-                closed_ids = await self.positions.evaluate_risk(opportunities)
+                run_id = await self.simulation.current_run_id() if self.simulation else None
+                closed_ids = await self.positions.evaluate_risk(
+                    opportunities, simulation_run_id=run_id
+                )
                 if self.simulation:
                     await self.simulation.reconcile_risk_closures(closed_ids)
+                    await self.simulation.reconcile_closed_funding(opportunities)
                     await self.simulation.evaluate_and_trade(opportunities)
                 await self._publish(opportunities)
         finally:
@@ -128,7 +142,8 @@ class Orchestrator:
             await self.run_once()
 
     @staticmethod
-    def _position_dict(position) -> dict:
+    def _position_dict(position, opportunity=None) -> dict:
+        pnl = position_pnl(position, opportunity)
         return {
             "id": position.id,
             "opportunity_id": position.opportunity_id,
@@ -157,6 +172,7 @@ class Orchestrator:
             "settled_short_funding_pnl_usd": getattr(
                 position, "settled_short_funding_pnl_usd", 0.0
             ),
+            "realized_basis_pnl_usd": getattr(position, "realized_basis_pnl_usd", 0.0),
             "accrued_funding_pnl_usd": getattr(position, "accrued_funding_pnl_usd", 0.0),
             "accrued_long_funding_pnl_usd": getattr(
                 position, "accrued_long_funding_pnl_usd", 0.0
@@ -168,6 +184,15 @@ class Orchestrator:
             "entry_fee_usd": getattr(position, "entry_fee_usd", 0.0),
             "exit_fee_usd": getattr(position, "exit_fee_usd", 0.0),
             "fees_usd": getattr(position, "fees_usd", 0.0),
+            "gross_pnl_usd": pnl.gross_pnl_usd,
+            "paid_fees_usd": pnl.paid_fees_usd,
+            "net_pnl_usd": pnl.net_pnl_usd,
+            "estimated_close_fee_usd": pnl.estimated_close_fee_usd,
+            "estimated_net_pnl_if_closed_usd": pnl.estimated_net_pnl_if_closed_usd,
+            "estimated_net_proceeds_usd": pnl.estimated_net_proceeds_usd,
+            "requested_size_usd": getattr(position, "requested_size_usd", None),
+            "execution_fill_ratio": getattr(position, "execution_fill_ratio", 1.0),
+            "temporary_exposure_usd": getattr(position, "temporary_exposure_usd", 0.0),
             "status": position.status,
             "negative_hours": position.negative_hours,
             "opened_at": position.opened_at.isoformat(),
